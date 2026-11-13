@@ -84,6 +84,8 @@ function renderCardCollections(collections) {
 
 function renderCardGame(message) {
   const picked = new Set(message.picked || []);
+  const turnPlayer = (message.collections || []).find((collection) => collection.id === message.currentPlayerId);
+  const turnColor = message.currentPlayerColor || turnPlayer?.color || socketState.color || 'white';
   cardsInstruction.textContent = message.currentPlayerId === socketState.player ? 'Your turn. Pick one card.' : 'Waiting for the other player.';
   renderCardCollections(message.collections || []);
   cardDeck.innerHTML = '';
@@ -100,8 +102,8 @@ function renderCardGame(message) {
     });
     cardDeck.appendChild(cardButton);
   });
-  cardsOverlay.className = `cards-overlay cards-overlay--${message.currentPlayerColor || 'white'} is-visible`;
-  cardsTurnGlow.className = `cards-turn-glow cards-turn-glow--${message.currentPlayerColor || 'white'}`;
+  cardsOverlay.className = `cards-overlay cards-overlay--${turnColor} is-visible`;
+  cardsTurnGlow.className = `cards-turn-glow cards-turn-glow--${turnColor}`;
   cardsOverlay.setAttribute('aria-hidden', 'false');
 }
 

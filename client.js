@@ -9,6 +9,7 @@ const stepInstruction = document.querySelector('#stepInstruction');
 const pageEyebrow = document.querySelector('#pageEyebrow');
 const pageTitle = document.querySelector('#page-title');
 const kingShapeButton = document.querySelector('#kingShapeButton');
+const backButton = document.querySelector('#backButton');
 const shapeStep = document.querySelector('#shapeStep');
 const colorStep = document.querySelector('#colorStep');
 const roomStep = document.querySelector('#roomStep');
@@ -46,6 +47,16 @@ function send(type, data = {}) { if (socketState.socket?.readyState === WebSocke
 function colorClass(color) { return `player-swatch player-swatch--${color}`; }
 function shapeGlyph(shape) { return shapeGlyphs[shape] || '•'; }
 function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" src="${kingIconPath}" alt="King" />` : shapeGlyph(shape); }
+
+function clearRoomSelection() {
+  roomList.classList.add('is-hidden');
+  standTrialButton.classList.add('is-hidden');
+  createRoomButton.classList.add('is-hidden');
+  newRoomName.value = '';
+  newRoomName.classList.remove('is-set', 'is-focused');
+  selectedRoomName = '';
+  document.querySelectorAll('.room-entry').forEach((entry) => entry.classList.remove('is-selected'));
+}
 
 function renderRoomDirectory(rooms) {
   roomList.innerHTML = '';
@@ -120,7 +131,7 @@ function showVerdict(color, shape, result) {
   verdictWinner.setAttribute('aria-label', `${shape} wins`);
   const isStrawLoss = result?.method === 'straws' && result.loser?.id === socketState.player;
   verdictSubtext.textContent = result?.method === 'straws'
-    ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'You drew the long straw. Meeting adjourned')
+    ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'Opponent came short. Meeting adjourned')
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
   verdictOverlay.setAttribute('aria-hidden', 'false');
   verdictOverlay.classList.add('is-visible');
@@ -194,6 +205,7 @@ function chooseShape(shape) {
     const chosenShape = socketState.shape[0].toUpperCase() + socketState.shape.slice(1);
     pageEyebrow.textContent = 'You are the';
     kingShapeButton.classList.add('is-hidden');
+    backButton.classList.remove('is-hidden');
     pageTitle.textContent = chosenShape;
     selectedShapeElement.innerHTML = shapeMarkup(socketState.shape);
     selectedShapeElement.setAttribute('aria-label', `${socketState.shape} selected`);
@@ -216,6 +228,33 @@ document.querySelectorAll('.color-option').forEach((button) => button.addEventLi
     stepInstruction.textContent = 'Prepare your arguments.';
   });
 }));
+
+backButton.addEventListener('click', () => {
+  if (!roomStep.classList.contains('is-hidden')) {
+    fadeBetween(() => {
+      roomStep.classList.add('is-hidden');
+      colorStep.classList.remove('is-hidden');
+      clearRoomSelection();
+      selectedColorGlow.className = 'selected-color-glow';
+      pageTitle.textContent = socketState.shape[0].toUpperCase() + socketState.shape.slice(1);
+      stepInstruction.textContent = 'Now choose your color.';
+    });
+    return;
+  }
+  fadeBetween(() => {
+    colorStep.classList.add('is-hidden');
+    shapeStep.classList.remove('is-hidden');
+    socketState.shape = null;
+    socketState.color = null;
+    selectedShapeElement.innerHTML = '';
+    kingShapeButton.classList.remove('is-hidden');
+    backButton.classList.add('is-hidden');
+    pageEyebrow.textContent = 'King of Nothing Presents';
+    pageTitle.innerHTML = 'Deciding<br /><span>Judge</span>';
+    stepInstruction.textContent = 'Choose a shape to begin.';
+    selectedColorGlow.className = 'selected-color-glow';
+  });
+});
 
 standTrialButton.addEventListener('click', () => {
   roomList.classList.remove('is-hidden');
@@ -252,6 +291,7 @@ document.querySelector('#leaveButton').addEventListener('click', () => {
     roomView.classList.add('is-hidden');
     roomStep.classList.remove('is-hidden');
     roomList.classList.add('is-hidden');
+    backButton.classList.remove('is-hidden');
     standTrialButton.classList.add('is-hidden');
     createRoomButton.classList.add('is-hidden');
     newRoomName.value = '';

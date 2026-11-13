@@ -19,6 +19,7 @@ const roomView = document.querySelector('#roomView');
 const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
+const gestureButton = document.querySelector('#gestureButton');
 const resultElement = document.querySelector('#result');
 const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
@@ -30,17 +31,27 @@ const strawOverlay = document.querySelector('#strawOverlay');
 const strawInstruction = document.querySelector('#strawInstruction');
 const strawChoices = document.querySelector('#strawChoices');
 const strawTallies = document.querySelector('#strawTallies');
-const socketState = { socket: null, player: null, shape: null, color: null };
+const gestureOverlay = document.querySelector('#gestureOverlay');
+const gestureInstruction = document.querySelector('#gestureInstruction');
+const gestureChoices = document.querySelector('#gestureChoices');
+const gestureReveal = document.querySelector('#gestureReveal');
+const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
 function fadeBetween(update, reveal = true) {
+  backButton.classList.add('is-fading');
   transitionOverlay.classList.add('is-active');
   window.setTimeout(() => {
     update();
     window.requestAnimationFrame(positionBackButton);
-    if (reveal) window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 260);
+    if (reveal) {
+      window.setTimeout(() => {
+        transitionOverlay.classList.remove('is-active');
+        backButton.classList.remove('is-fading');
+      }, 260);
+    }
   }, 420);
 }
 
@@ -48,6 +59,9 @@ function send(type, data = {}) { if (socketState.socket?.readyState === WebSocke
 function colorClass(color) { return `player-swatch player-swatch--${color}`; }
 function shapeGlyph(shape) { return shapeGlyphs[shape] || '•'; }
 function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" src="${kingIconPath}" alt="King" />` : shapeGlyph(shape); }
+const gestureAssets = { rock: '/Element/Rock.png', paper: '/Element/Paper.png', scissors: '/Element/Scissors.png' };
+
+function gestureMarkup(gesture) { return `<img src="${gestureAssets[gesture]}" alt="${gesture}" />`; }
 
 function clearRoomSelection() {
   roomList.classList.add('is-hidden');
@@ -61,14 +75,17 @@ function clearRoomSelection() {
 
 function positionBackButton() {
   if (backButton.classList.contains('is-hidden')) return;
+  backButton.style.position = 'fixed';
   const activeStep = [shapeStep, colorStep, roomStep].find((step) => !step.classList.contains('is-hidden'));
   if (!activeStep) return;
-  const selectionBox = [...activeStep.querySelectorAll('.shape-options, .color-options, .room-list, .room-variable')]
-    .find((element) => !element.classList.contains('is-hidden'));
+  const selectionBox = activeStep === roomStep
+    ? roomStep.querySelector('.room-variable')
+    : [...activeStep.querySelectorAll('.shape-options, .color-options')]
+      .find((element) => !element.classList.contains('is-hidden'));
   const bounds = (selectionBox || activeStep).getBoundingClientRect();
   const arrowGap = 18;
   backButton.style.left = `${Math.max(12, bounds.left - backButton.offsetWidth - arrowGap)}px`;
-  backButton.style.top = `${bounds.top + (bounds.height / 2)}px`;
+  backButton.style.top = `${bounds.top + (bounds.height / 2) - 10}px`;
 }
 
 function renderRoomDirectory(rooms) {
@@ -107,6 +124,7 @@ function joinRoom(roomName) {
 }
 
 function renderRoom(room) {
+  socketState.hostId = room.hostId || room.players[0]?.id || null;
   const argumentsInRoom = room.players.map((player) => player.argument || room.name);
   document.querySelector('#roomHeadingName').textContent = argumentsInRoom.length > 1 ? `${argumentsInRoom[0]} or ${argumentsInRoom[1]}` : argumentsInRoom[0];
   playersElement.innerHTML = '';
@@ -133,8 +151,55 @@ function renderRoom(room) {
   }
   playersElement.appendChild(duelElement);
   const ready = room.players.length === 2;
-  judgeButton.disabled = !ready;
-  strawButton.disabled = !ready;
+  const isHost = socketState.player === socketState.hostId;
+  judgeButton.disabled = !ready || !isHost;
+  strawButton.disabled = !ready || !isHost;
+  gestureButton.disabled = !ready || !isHost;
+  [judgeButton, strawButton, gestureButton].forEach((button) => {
+    button.title = isHost ? '' : 'Only the host can choose the game.';
+  });
+}
+
+function renderGestureChoices(selectedPlayerIds = []) {
+  const alreadySelected = selectedPlayerIds.includes(socketState.player);
+  gestureChoices.innerHTML = '';
+  ['rock', 'paper', 'scissors'].forEach((gesture) => {
+    const choiceButton = document.createElement('button');
+    choiceButton.className = 'gesture-choice';
+    choiceButton.type = 'button';
+    choiceButton.disabled = alreadySelected;
+    choiceButton.setAttribute('aria-label', `Choose ${gesture}`);
+    choiceButton.innerHTML = `${gestureMarkup(gesture)}<span>${gesture}</span>`;
+    choiceButton.addEventListener('click', () => {
+      gestureChoices.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+      gestureInstruction.textContent = 'Waiting for the other player.';
+      send('gestureChoice', { choice: gesture });
+    });
+    gestureChoices.appendChild(choiceButton);
+  });
+}
+
+function renderGestureStart(message) {
+  gestureReveal.innerHTML = '';
+  gestureInstruction.textContent = 'Choose rock, paper, or scissors.';
+  renderGestureChoices(message.selectedPlayerIds || []);
+  gestureOverlay.setAttribute('aria-hidden', 'false');
+  gestureOverlay.classList.add('is-visible');
+}
+
+function showGestureResult(message) {
+  gestureChoices.innerHTML = '';
+  const players = [...document.querySelectorAll('.player-token')].filter((token) => !token.classList.contains('player-token--empty'));
+  const roomPlayers = players.map((token) => token.getAttribute('aria-label') || 'Player');
+  const choiceCards = Object.entries(message.choices).map(([playerId, gesture], index) => {
+    const winnerClass = message.winner?.id === playerId ? ' is-winner' : '';
+    return `<div class="gesture-result-card${winnerClass}"><span>${roomPlayers[index] || 'Player'}</span>${gestureMarkup(gesture)}<strong>${gesture}</strong></div>`;
+  }).join('<span class="gesture-versus">V</span>');
+  gestureReveal.innerHTML = choiceCards;
+  gestureInstruction.textContent = message.winner ? 'The gesture has spoken.' : 'A draw. Choose again.';
+  gestureOverlay.classList.add('is-visible');
+  gestureOverlay.setAttribute('aria-hidden', 'false');
+  if (!message.winner) window.setTimeout(() => renderGestureChoices([]), 800);
 }
 
 function showVerdict(color, shape, result) {
@@ -196,18 +261,24 @@ function connectSocket() {
       socketState.player = message.playerId;
       loginView.classList.add('is-hidden');
       roomView.classList.remove('is-hidden');
+      backButton.classList.remove('is-fading');
       renderRoom(message.room);
       window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 420);
     }
     if (message.type === 'room') renderRoom(message.room);
     if (message.type === 'strawStart') renderStrawDraw(message);
     if (message.type === 'strawUpdate') renderStrawDraw(message);
+    if (message.type === 'gestureStart') renderGestureStart(message);
+    if (message.type === 'gestureUpdate') {
+      gestureInstruction.textContent = 'Waiting for the other player.';
+    }
+    if (message.type === 'gestureResult') showGestureResult(message);
     if (message.type === 'result') {
       strawOverlay.classList.remove('is-visible');
       strawOverlay.setAttribute('aria-hidden', 'true');
       showVerdict(message.winner.color, message.winner.shape, message);
     }
-    if (message.type === 'error') { formMessage.textContent = message.message; formMessage.className = 'form-message is-error'; transitionOverlay.classList.remove('is-active'); }
+    if (message.type === 'error') { formMessage.textContent = message.message; formMessage.className = 'form-message is-error'; transitionOverlay.classList.remove('is-active'); backButton.classList.remove('is-fading'); }
   });
   socket.addEventListener('error', () => { formMessage.textContent = 'Could not connect to the room server. Try again.'; formMessage.className = 'form-message is-error'; });
 }
@@ -238,7 +309,7 @@ document.querySelectorAll('.color-option').forEach((button) => button.addEventLi
     pageTitle.innerHTML = `<span class="header-color-symbol header-color-symbol--${socketState.color}" aria-label="${socketState.color} ${socketState.shape}">${shapeMarkup(socketState.shape)}</span>`;
     colorStep.classList.add('is-hidden');
     roomStep.classList.remove('is-hidden');
-    stepInstruction.textContent = 'Prepare your arguments.';
+    stepInstruction.textContent = 'Prepare your argument.';
   });
 }));
 
@@ -297,6 +368,7 @@ roomForm.addEventListener('submit', (event) => {
 
 judgeButton.addEventListener('click', () => send('judge'));
 strawButton.addEventListener('click', () => send('straws'));
+gestureButton.addEventListener('click', () => send('gestureStart'));
 document.querySelector('#leaveButton').addEventListener('click', () => {
   socketState.socket?.close();
   fadeBetween(() => {

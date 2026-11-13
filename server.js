@@ -11,11 +11,13 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, players: new Map(), result: null, strawSession: null }; }
+function makeRoom(name) { return { name, players: new Map(), result: null, strawSession: null, gestureSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
+function hostId(room) { return [...room.players.keys()][0] || null; }
 
 function publicRoom(room) {
-  return { name: room.name, players: [...room.players.values()].map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
+  const players = [...room.players.values()];
+  return { name: room.name, hostId: hostId(room), players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
 }
 
 // The lobby only receives the information needed to show room availability.
@@ -77,21 +79,21 @@ websocketServer.on('connection', (socket) => {
       return broadcastRoomDirectory();
     }
 
-    if (message.type === 'judge' && player.room && player.room.players.size === 2) {
+    if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
       const players = [...player.room.players.values()];
       const winner = players[crypto.randomInt(players.length)];
       player.room.result = { winnerId: winner.id, color: winner.color };
       return broadcast(player.room, { type: 'result', winner: { id: winner.id, color: winner.color, shape: winner.shape } });
     }
 
-    if (message.type === 'straws' && player.room && player.room.players.size === 2) {
+    if (message.type === 'straws' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
       if (player.room.strawSession) return;
       const argumentLength = [...player.room.players.values()].reduce((total, roomPlayer) => total + roomPlayer.argument.length, 0);
       const strawCount = Math.max(3, Math.min(18, argumentLength));
       const shortIndex = crypto.randomInt(strawCount);
       const straws = Array.from({ length: strawCount }, (_, index) => ({
         id: `straw-${index}`,
-        height: 320,
+        height: 330,
         short: index === shortIndex,
         angle: crypto.randomInt(-4, 5),
       }));
@@ -137,11 +139,46 @@ websocketServer.on('connection', (socket) => {
         loser: { id: loser.id, color: loser.color, shape: loser.shape },
       });
     }
+
+    if (message.type === 'gestureStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+      if (player.room.gestureSession) return;
+      player.room.gestureSession = { choices: new Map() };
+      return broadcast(player.room, { type: 'gestureStart', selectedPlayerIds: [] });
+    }
+
+    if (message.type === 'gestureChoice' && player.room?.gestureSession) {
+      const session = player.room.gestureSession;
+      const choice = ['rock', 'paper', 'scissors'].includes(message.choice) ? message.choice : null;
+      if (!choice || session.choices.has(player.id)) return;
+      session.choices.set(player.id, choice);
+      const selectedPlayerIds = [...session.choices.keys()];
+      if (session.choices.size < player.room.players.size) {
+        return broadcast(player.room, { type: 'gestureUpdate', selectedPlayerIds });
+      }
+
+      const players = [...player.room.players.values()];
+      const [first, second] = players;
+      const firstChoice = session.choices.get(first.id);
+      const secondChoice = session.choices.get(second.id);
+      const winningChoices = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
+      const winner = firstChoice === secondChoice
+        ? null
+        : (winningChoices[firstChoice] === secondChoice ? first : second);
+      const gestureResult = {
+        type: 'gestureResult',
+        choices: { [first.id]: firstChoice, [second.id]: secondChoice },
+        winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null,
+      };
+      player.room.gestureSession = winner ? null : { choices: new Map() };
+      player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'gesture' } : null;
+      return broadcast(player.room, gestureResult);
+    }
   });
 
   socket.on('close', () => {
     if (!player.room) return;
     player.room.strawSession = null;
+    player.room.gestureSession = null;
     player.room.players.delete(player.id);
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());
     else broadcastRoom(player.room);

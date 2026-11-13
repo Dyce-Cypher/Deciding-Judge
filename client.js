@@ -16,6 +16,7 @@ const roomStep = document.querySelector('#roomStep');
 const selectedShapeElement = document.querySelector('#selectedShape');
 const loginView = document.querySelector('#loginView');
 const roomView = document.querySelector('#roomView');
+const roomCombinedGlow = document.querySelector('#roomCombinedGlow');
 const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
@@ -80,6 +81,9 @@ function renderCardCollections(collections) {
   const playerCollection = (collections || []).find((collection) => collection.id === socketState.player);
   if (!playerCollection) { cardCollections.innerHTML = ''; return; }
   const cards = playerCollection.cards || [];
+  const availableWidth = Math.max(280, window.innerWidth - 48);
+  const fittedSize = Math.min(192, Math.max(18, Math.floor((availableWidth / Math.max(cards.length, 1)) * 0.82)));
+  cardCollections.style.setProperty('--revealed-card-size', `${fittedSize}px`);
   cardCollections.innerHTML = `<div class="card-collection"><div class="collected-cards">${cards.map((card, index) => `<span class="collected-card${index >= renderedCardCount ? ' is-new-card' : ''}" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div></div>`;
   renderedCardCount = cards.length;
 }
@@ -200,6 +204,13 @@ function renderRoom(room) {
   }
   playersElement.appendChild(duelElement);
   const ready = room.players.length === 2;
+  if (ready) {
+    const roomColors = room.players.map((player) => player.color);
+    roomCombinedGlow.style.background = `linear-gradient(135deg, var(--${roomColors[0]}), var(--${roomColors[1]}))`;
+    roomCombinedGlow.classList.add('is-visible');
+  } else {
+    roomCombinedGlow.classList.remove('is-visible');
+  }
   const isHost = socketState.player === socketState.hostId;
   judgeButton.disabled = !ready || !isHost;
   strawButton.disabled = !ready || !isHost;

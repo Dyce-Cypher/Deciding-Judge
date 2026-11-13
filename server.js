@@ -70,7 +70,7 @@ function recordSeriesResult(room, winnerId, loserId, method) {
   room.series.losses.set(loserId, (room.series.losses.get(loserId) || 0) + 1);
   room.lastResult = { winnerId, loserId, method };
   const scores = [...room.players.keys()].map((id) => ({ id, wins: room.series.wins.get(id) || 0, losses: room.series.losses.get(id) || 0 }));
-  return { method, winnerId, loserId, target: room.series.target, complete: scores.some((score) => score.wins >= 5), scores };
+  return { method, winnerId, loserId, target: room.series.target, complete: Boolean(room.series.target && scores.some((score) => score.wins >= room.series.target)), scores };
 }
 
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
@@ -335,7 +335,7 @@ websocketServer.on('connection', (socket) => {
 
     if (message.type === 'rematchRequest' && player.room?.lastResult) {
       const bestOf = [3, 5].includes(Number(message.bestOf)) ? Number(message.bestOf) : 3;
-      if ([...player.room.series.wins.values()].some((wins) => wins >= 5)) return;
+      if (player.room.series.target && [...player.room.series.wins.values()].some((wins) => wins >= player.room.series.target)) return;
       if (player.id !== player.room.lastResult.loserId) return;
       player.room.series.target = bestOf;
       player.room.series.chooserId = player.id;

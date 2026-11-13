@@ -63,7 +63,9 @@ function positionBackButton() {
   if (backButton.classList.contains('is-hidden')) return;
   const activeStep = [shapeStep, colorStep, roomStep].find((step) => !step.classList.contains('is-hidden'));
   if (!activeStep) return;
-  const bounds = activeStep.getBoundingClientRect();
+  const selectionBox = [...activeStep.querySelectorAll('.shape-options, .color-options, .room-list, .room-variable')]
+    .find((element) => !element.classList.contains('is-hidden'));
+  const bounds = (selectionBox || activeStep).getBoundingClientRect();
   backButton.style.left = `${Math.max(12, bounds.left - 42)}px`;
   backButton.style.top = `${bounds.top + (bounds.height / 2)}px`;
 }

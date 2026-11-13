@@ -145,7 +145,7 @@ function renderStrawDraw(message) {
     const drawn = drawnIds.has(strawData.id);
     if (drawn) return;
     const strawButton = document.createElement('button');
-    strawButton.className = `straw-choice${drawn ? ' is-drawn' : ''}`;
+    strawButton.className = `straw-choice${strawData.crop ? ' is-cropped' : ''}${drawn ? ' is-drawn' : ''}`;
     strawButton.type = 'button';
     strawButton.style.setProperty('--straw-height', `${strawData.height}px`);
     strawButton.style.setProperty('--straw-tilt', `${strawData.angle || 0}deg`);

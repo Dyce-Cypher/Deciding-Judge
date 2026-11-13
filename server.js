@@ -91,7 +91,8 @@ websocketServer.on('connection', (socket) => {
       const shortIndex = crypto.randomInt(strawCount);
       const straws = Array.from({ length: strawCount }, (_, index) => ({
         id: `straw-${index}`,
-        height: index === shortIndex ? 120 : crypto.randomInt(210, 231),
+        height: 220,
+        crop: index === shortIndex,
         angle: crypto.randomInt(-4, 5),
       }));
       const tallies = new Map([...player.room.players.values()].map((roomPlayer) => [roomPlayer.id, 0]));

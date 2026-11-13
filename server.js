@@ -91,7 +91,7 @@ websocketServer.on('connection', (socket) => {
       const shortIndex = crypto.randomInt(strawCount);
       const straws = Array.from({ length: strawCount }, (_, index) => ({
         id: `straw-${index}`,
-        height: 220,
+        height: 230,
         short: index === shortIndex,
         angle: crypto.randomInt(-4, 5),
       }));

@@ -75,12 +75,10 @@ function cardSymbol(card) {
 }
 
 function renderCardCollections(collections) {
-  cardCollections.innerHTML = (collections || []).map((collection) => `
-    <div class="card-collection">
-      <p>${collection.id === socketState.player ? 'Your cards' : 'Other player'}</p>
-      <div class="collected-cards">${collection.cards.map((card) => `<span class="collected-card" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div>
-      <strong>${collection.total} points</strong>
-    </div>`).join('');
+  const playerCollection = (collections || []).find((collection) => collection.id === socketState.player);
+  cardCollections.innerHTML = playerCollection
+    ? `<div class="card-collection"><div class="collected-cards">${playerCollection.cards.map((card) => `<span class="collected-card" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div></div>`
+    : '';
 }
 
 function renderCardGame(message) {

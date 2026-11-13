@@ -13,7 +13,6 @@ const backButton = document.querySelector('#backButton');
 const shapeStep = document.querySelector('#shapeStep');
 const colorStep = document.querySelector('#colorStep');
 const roomStep = document.querySelector('#roomStep');
-const selectedShapeElement = document.querySelector('#selectedShape');
 const loginView = document.querySelector('#loginView');
 const roomView = document.querySelector('#roomView');
 const roomCombinedGlow = document.querySelector('#roomCombinedGlow');
@@ -363,8 +362,6 @@ function chooseShape(shape) {
     kingShapeButton.classList.add('is-hidden');
     backButton.classList.remove('is-hidden');
     pageTitle.innerHTML = shapeMarkup(socketState.shape);
-    selectedShapeElement.innerHTML = shapeMarkup(socketState.shape);
-    selectedShapeElement.setAttribute('aria-label', `${socketState.shape} selected`);
     shapeStep.classList.add('is-hidden');
     colorStep.classList.remove('is-hidden');
     stepInstruction.textContent = 'Now choose your color.';
@@ -392,7 +389,7 @@ backButton.addEventListener('click', () => {
       colorStep.classList.remove('is-hidden');
       clearRoomSelection();
       selectedColorGlow.className = 'selected-color-glow';
-      pageTitle.textContent = socketState.shape[0].toUpperCase() + socketState.shape.slice(1);
+      pageTitle.innerHTML = shapeMarkup(socketState.shape);
       stepInstruction.textContent = 'Now choose your color.';
     });
     return;
@@ -402,7 +399,6 @@ backButton.addEventListener('click', () => {
     shapeStep.classList.remove('is-hidden');
     socketState.shape = null;
     socketState.color = null;
-    selectedShapeElement.innerHTML = '';
     kingShapeButton.classList.remove('is-hidden');
     backButton.classList.add('is-hidden');
     pageEyebrow.textContent = 'King of Nothing Presents';

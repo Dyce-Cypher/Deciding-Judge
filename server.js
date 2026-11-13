@@ -11,13 +11,13 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, series: { wins: new Map(), losses: new Map(), target: null }, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
+function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, series: { wins: new Map(), losses: new Map(), target: null, meetings: 0 }, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
 
 function publicRoom(room) {
   const players = [...room.players.values()];
-  return { name: room.name, hostId: room.hostId || hostId(room), players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
+  return { name: room.name, hostId: room.hostId || hostId(room), series: { target: room.series.target, meetings: room.series.meetings }, players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
 }
 
 // The lobby only receives the information needed to show room availability.
@@ -63,6 +63,7 @@ function publicDiceState(room, session, playerId) {
 }
 function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
 function recordSeriesResult(room, winnerId, loserId, method) {
+  room.series.meetings += 1;
   room.series.wins.set(winnerId, (room.series.wins.get(winnerId) || 0) + 1);
   room.series.losses.set(loserId, (room.series.losses.get(loserId) || 0) + 1);
   room.lastResult = { winnerId, loserId, method };
@@ -334,7 +335,7 @@ websocketServer.on('connection', (socket) => {
       if (player.id !== player.room.lastResult.loserId) return;
       player.room.series.target = bestOf;
       const winner = player.room.players.get(player.room.lastResult.winnerId);
-      if (winner) send(winner.socket, { type: 'rematchOffer', bestOf, scores: player.room.lastResult.series?.scores || [] });
+      if (winner) send(winner.socket, { type: 'rematchOffer', bestOf, meetingNumber: player.room.series.meetings + 1, scores: player.room.lastResult.series?.scores || [] });
       return;
     }
 
@@ -347,7 +348,7 @@ websocketServer.on('connection', (socket) => {
         player.room.gestureSession = null;
         player.room.cardSession = null;
         player.room.diceSession = null;
-        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
+        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, meetingNumber: player.room.series.meetings + 1, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
       }
       return send(loser.socket, { type: 'rematchDeclined' });
     }

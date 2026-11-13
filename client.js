@@ -16,6 +16,7 @@ const roomStep = document.querySelector('#roomStep');
 const loginView = document.querySelector('#loginView');
 const roomView = document.querySelector('#roomView');
 const roomCombinedGlow = document.querySelector('#roomCombinedGlow');
+const meetingLabel = document.querySelector('#meetingLabel');
 const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
@@ -58,6 +59,7 @@ let selectedRoomName = '';
 let renderedCardCount = 0;
 let selectedDice = new Set();
 let currentRoomState = null;
+let nextMeetingNumber = 1;
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
@@ -231,6 +233,10 @@ function renderRoom(room) {
   socketState.hostId = room.players[0]?.id || null;
   const argumentsInRoom = room.players.map((player) => player.argument || room.name);
   document.querySelector('#roomHeadingName').textContent = argumentsInRoom.length > 1 ? `${argumentsInRoom[0]} or ${argumentsInRoom[1]}` : argumentsInRoom[0];
+  const meetingWords = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+  meetingLabel.textContent = room.series?.target && nextMeetingNumber > 1
+    ? `${meetingWords[nextMeetingNumber - 1] || `${nextMeetingNumber}th`} meeting in session`
+    : 'Meeting in Session';
   playersElement.innerHTML = '';
   const duelElement = document.createElement('div');
   duelElement.className = 'player-duel';
@@ -340,14 +346,14 @@ function showVerdict(color, shape, result) {
     if (!result?.winner || !result?.loser) return;
     const loser = result.loser.id === socketState.player;
     const winner = result.winner.id === socketState.player;
-    if (!loser && !winner) return;
+    if (!loser) return;
     rematchPanel.classList.remove('is-hidden');
     bestOfThreeButton.classList.toggle('is-hidden', !loser);
     const loserScore = result.series?.scores?.find((score) => score.id === socketState.player);
     bestOfFiveButton.classList.toggle('is-hidden', !loser || (loserScore?.losses || 0) < 2);
-    acceptRematchButton.classList.toggle('is-hidden', !winner);
-    declineRematchButton.classList.toggle('is-hidden', !winner);
-    rematchPrompt.textContent = loser ? 'Choose a rematch format.' : 'The other player has requested a rematch.';
+    acceptRematchButton.classList.add('is-hidden');
+    declineRematchButton.classList.add('is-hidden');
+    rematchPrompt.textContent = 'Choose a rematch format.';
   }, 2000);
   verdictOverlay.setAttribute('aria-hidden', 'false');
   verdictOverlay.classList.add('is-visible');
@@ -444,9 +450,11 @@ function connectSocket() {
       bestOfFiveButton.classList.add('is-hidden');
       acceptRematchButton.classList.remove('is-hidden');
       declineRematchButton.classList.remove('is-hidden');
-      rematchPrompt.textContent = `The other player requests a best of ${message.bestOf} rematch.`;
+      rematchPrompt.textContent = 'A member of the Court has requested a retrial';
     }
     if (message.type === 'rematchReady') {
+      nextMeetingNumber = message.meetingNumber || 2;
+      currentRoomState.series = { target: message.bestOf, meetings: nextMeetingNumber - 1 };
       verdictOverlay.classList.remove('is-visible');
       verdictOverlay.setAttribute('aria-hidden', 'true');
       rematchPanel.classList.add('is-hidden');

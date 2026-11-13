@@ -362,7 +362,7 @@ function chooseShape(shape) {
     pageEyebrow.textContent = 'You are the';
     kingShapeButton.classList.add('is-hidden');
     backButton.classList.remove('is-hidden');
-    pageTitle.textContent = chosenShape;
+    pageTitle.innerHTML = shapeMarkup(socketState.shape);
     selectedShapeElement.innerHTML = shapeMarkup(socketState.shape);
     selectedShapeElement.setAttribute('aria-label', `${socketState.shape} selected`);
     shapeStep.classList.add('is-hidden');

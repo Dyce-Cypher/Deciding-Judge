@@ -124,7 +124,9 @@ function joinRoom(roomName) {
 }
 
 function renderRoom(room) {
-  socketState.hostId = room.hostId || room.players[0]?.id || null;
+  // The first player in the room is the creator and remains the host.
+  // Derive this from the ordered player list so older room messages cannot disable the host controls.
+  socketState.hostId = room.players[0]?.id || null;
   const argumentsInRoom = room.players.map((player) => player.argument || room.name);
   document.querySelector('#roomHeadingName').textContent = argumentsInRoom.length > 1 ? `${argumentsInRoom[0]} or ${argumentsInRoom[1]}` : argumentsInRoom[0];
   playersElement.innerHTML = '';

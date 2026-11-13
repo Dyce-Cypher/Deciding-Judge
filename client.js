@@ -21,6 +21,7 @@ const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
 const gestureButton = document.querySelector('#gestureButton');
 const cardsButton = document.querySelector('#cardsButton');
+const diceButton = document.querySelector('#diceButton');
 const resultElement = document.querySelector('#result');
 const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
@@ -41,9 +42,16 @@ const cardsTurnGlow = document.querySelector('#cardsTurnGlow');
 const cardsInstruction = document.querySelector('#cardsInstruction');
 const cardCollections = document.querySelector('#cardCollections');
 const cardDeck = document.querySelector('#cardDeck');
+const diceOverlay = document.querySelector('#diceOverlay');
+const diceInstruction = document.querySelector('#diceInstruction');
+const diceHand = document.querySelector('#diceHand');
+const rerollDiceButton = document.querySelector('#rerollDiceButton');
+const callDiceButton = document.querySelector('#callDiceButton');
+const diceOpponentStatus = document.querySelector('#diceOpponentStatus');
 const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
 let renderedCardCount = 0;
+let selectedDice = new Set();
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
@@ -74,6 +82,25 @@ function gestureMarkup(gesture) { return `<img src="${gestureAssets[gesture]}" a
 function cardSymbol(card) {
   const rankOffset = card.rank === 1 ? 0 : card.rank <= 10 ? card.rank - 1 : card.rank === 11 ? 10 : card.rank === 12 ? 12 : 13;
   return String.fromCodePoint(cardSuitBases[card.suit] + rankOffset);
+}
+function diceSymbol(value) { return String.fromCodePoint(0x2680 + value - 1); }
+
+function renderDiceState(message) {
+  const myTurn = message.currentPlayerId === socketState.player;
+  const canAct = myTurn && !message.called;
+  diceInstruction.textContent = myTurn ? 'Select dice to reroll, or call your hand.' : 'Waiting for the other player.';
+  diceOpponentStatus.textContent = message.opponentCalled ? 'The other player has called.' : `Other player rolls: ${message.opponentRolls || 0}`;
+  diceHand.innerHTML = (message.dice || []).map((value, index) => `<button class="die${selectedDice.has(index) ? ' is-selected' : ''}" type="button" data-index="${index}" ${canAct ? '' : 'disabled'} aria-label="Die showing ${value}">${diceSymbol(value)}</button>`).join('');
+  diceHand.querySelectorAll('.die').forEach((die) => die.addEventListener('click', () => {
+    const index = Number(die.dataset.index);
+    if (selectedDice.has(index)) selectedDice.delete(index); else if (selectedDice.size < 5) selectedDice.add(index);
+    die.classList.toggle('is-selected', selectedDice.has(index));
+    rerollDiceButton.disabled = !canAct || selectedDice.size === 0 || message.rolls >= 3;
+  }));
+  rerollDiceButton.disabled = !canAct || selectedDice.size === 0 || message.rolls >= 3;
+  callDiceButton.disabled = !canAct || message.rolls < 3;
+  diceOverlay.className = `dice-overlay dice-overlay--${message.currentPlayerColor || 'white'} is-visible`;
+  diceOverlay.setAttribute('aria-hidden', 'false');
 }
 
 function renderCardCollections(collections) {
@@ -215,7 +242,8 @@ function renderRoom(room) {
   strawButton.disabled = !ready || !isHost;
   gestureButton.disabled = !ready || !isHost;
   cardsButton.disabled = !ready || !isHost;
-  [judgeButton, strawButton, gestureButton, cardsButton].forEach((button) => {
+  diceButton.disabled = !ready || !isHost;
+  [judgeButton, strawButton, gestureButton, cardsButton, diceButton].forEach((button) => {
     button.title = isHost ? '' : 'Only the host can choose the game.';
   });
 }
@@ -271,6 +299,8 @@ function showVerdict(color, shape, result) {
   const winnerTotal = result?.collections?.find((collection) => collection.id === result.winner?.id)?.total;
   verdictSubtext.textContent = result?.method === 'cards'
     ? (result.winner ? `Ruling in favor of the ${shape}. ${winnerTotal} points. Meeting adjourned` : 'The cards are tied. Meeting adjourned')
+    : result?.method === 'dice'
+    ? `Ruling in favor of the ${shape || 'the table'}. Poker dice hand wins. Meeting adjourned`
     : result?.method === 'straws'
     ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'Opponent came short. Meeting adjourned')
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
@@ -342,6 +372,19 @@ function connectSocket() {
       cardsOverlay.classList.remove('is-visible');
       cardsOverlay.setAttribute('aria-hidden', 'true');
       showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'cards' });
+    }
+    if (message.type === 'diceStart') {
+      selectedDice = new Set();
+      renderDiceState(message);
+    }
+    if (message.type === 'diceUpdate') {
+      selectedDice = new Set();
+      renderDiceState(message);
+    }
+    if (message.type === 'diceResult') {
+      diceOverlay.classList.remove('is-visible');
+      diceOverlay.setAttribute('aria-hidden', 'true');
+      showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'dice' });
     }
     if (message.type === 'gameDenied') resultElement.textContent = message.message;
     if (message.type === 'result') {
@@ -438,6 +481,15 @@ judgeButton.addEventListener('click', () => send('judge'));
 strawButton.addEventListener('click', () => send('straws'));
 gestureButton.addEventListener('click', () => send('gestureStart'));
 cardsButton.addEventListener('click', () => send('cardsStart'));
+diceButton.addEventListener('click', () => send('diceStart'));
+rerollDiceButton.addEventListener('click', () => {
+  send('diceRoll', { indices: [...selectedDice] });
+  selectedDice = new Set();
+});
+callDiceButton.addEventListener('click', () => {
+  send('diceCall');
+  selectedDice = new Set();
+});
 document.querySelector('#leaveButton').addEventListener('click', () => {
   socketState.socket?.close();
   fadeBetween(() => {

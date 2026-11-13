@@ -11,7 +11,7 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null, cardSession: null }; }
+function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
 
@@ -40,6 +40,28 @@ function publicCardCollections(room, session) {
     total: session.totals.get(roomPlayer.id) || 0,
   }));
 }
+
+function rollDice() { return Array.from({ length: 5 }, () => crypto.randomInt(1, 7)); }
+function evaluateDiceHand(dice) {
+  const counts = new Map();
+  dice.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+  const groups = [...counts.entries()].sort((left, right) => right[1] - left[1] || right[0] - left[0]);
+  const pattern = groups.map((group) => group[1]).join('-');
+  const category = pattern === '5' ? 6 : pattern === '4-1' ? 5 : pattern === '3-2' ? 4 : pattern === '3-1-1' ? 3 : pattern === '2-2-1' ? 2 : pattern === '2-1-1-1' ? 1 : 0;
+  return { category, tiebreak: groups.flatMap(([value, count]) => Array(count).fill(value)) };
+}
+function compareDiceHands(left, right) {
+  if (left.category !== right.category) return left.category - right.category;
+  for (let index = 0; index < left.tiebreak.length; index += 1) if (left.tiebreak[index] !== right.tiebreak[index]) return left.tiebreak[index] - right.tiebreak[index];
+  return 0;
+}
+function publicDiceState(room, session, playerId) {
+  const hand = session.hands.get(playerId);
+  const opponent = [...room.players.keys()].find((id) => id !== playerId);
+  const currentPlayer = room.players.get(session.currentPlayerId);
+  return { type: 'diceUpdate', dice: hand.dice, rolls: hand.rolls, called: hand.called, currentPlayerId: session.currentPlayerId, currentPlayerColor: currentPlayer?.color || 'white', opponentCalled: session.hands.get(opponent)?.called || false, opponentRolls: session.hands.get(opponent)?.rolls || 0 };
+}
+function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
 
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function broadcast(room, message) { room.players.forEach((player) => send(player.socket, message)); }
@@ -236,6 +258,51 @@ websocketServer.on('connection', (socket) => {
       session.currentPlayerId = otherPlayer.id;
       return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color, collections });
     }
+
+    if (message.type === 'diceStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+      if (player.room.diceSession) return;
+      const players = [...player.room.players.values()];
+      player.room.diceSession = {
+        currentPlayerId: hostId(player.room),
+        hands: new Map(players.map((roomPlayer) => [roomPlayer.id, { dice: rollDice(), rolls: 0, called: false }])),
+      };
+      player.room.players.forEach((roomPlayer) => send(roomPlayer.socket, { type: 'diceStart', dice: player.room.diceSession.hands.get(roomPlayer.id).dice, rolls: 0, currentPlayerId: hostId(player.room) }));
+      return;
+    }
+
+    if (message.type === 'diceRoll' && player.room?.diceSession) {
+      const session = player.room.diceSession;
+      const hand = session.hands.get(player.id);
+      if (session.currentPlayerId !== player.id || hand.called || hand.rolls >= 3) return;
+      const selected = Array.isArray(message.indices) ? [...new Set(message.indices.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < 5))] : [];
+      if (selected.length > 5) return;
+      selected.forEach((index) => { hand.dice[index] = crypto.randomInt(1, 7); });
+      hand.rolls += 1;
+      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+      session.currentPlayerId = otherPlayer.id;
+      sendDiceStates(player.room, session);
+      return;
+    }
+
+    if (message.type === 'diceCall' && player.room?.diceSession) {
+      const session = player.room.diceSession;
+      const hand = session.hands.get(player.id);
+      if (session.currentPlayerId !== player.id || hand.called || hand.rolls < 3) return;
+      hand.called = true;
+      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+      if (!otherPlayer || session.hands.get(otherPlayer.id).called) {
+        const players = [...player.room.players.values()];
+        const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
+        const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
+        const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
+        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null };
+        player.room.diceSession = null;
+        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
+        return broadcast(player.room, diceResult);
+      }
+      session.currentPlayerId = otherPlayer.id;
+      return sendDiceStates(player.room, session);
+    }
   });
 
   socket.on('close', () => {
@@ -243,6 +310,7 @@ websocketServer.on('connection', (socket) => {
     player.room.strawSession = null;
     player.room.gestureSession = null;
     player.room.cardSession = null;
+    player.room.diceSession = null;
     player.room.players.delete(player.id);
     if (player.room.hostId === player.id) player.room.hostId = [...player.room.players.keys()][0] || null;
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());

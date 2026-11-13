@@ -59,6 +59,7 @@
         <button class="straw-button" id="strawButton" type="button" disabled>Consult the Straws</button>
         <button class="gesture-button" id="gestureButton" type="button" disabled>Duel By Gesture</button>
         <button class="cards-button" id="cardsButton" type="button" disabled>Follow the Cards</button>
+        <button class="dice-button" id="diceButton" type="button" disabled>Poker Dice</button>
         <div class="result" id="result" aria-live="assertive"></div>
       </section>
     </main>
@@ -101,6 +102,17 @@
         <p id="cardsInstruction">The host picks first.</p>
         <div class="card-collections" id="cardCollections"></div>
         <div class="card-deck" id="cardDeck"></div>
+      </div>
+    </section>
+
+    <section class="dice-overlay" id="diceOverlay" aria-live="polite" aria-hidden="true">
+      <div class="dice-content">
+        <p class="eyebrow">Poker Dice</p>
+        <h2>Roll the<br /><span>bones.</span></h2>
+        <p id="diceInstruction">The host rolls first.</p>
+        <div class="dice-hand" id="diceHand"></div>
+        <div class="dice-actions"><button class="dice-action" id="rerollDiceButton" type="button">Reroll selected</button><button class="dice-action" id="callDiceButton" type="button">Call</button></div>
+        <p class="dice-opponent" id="diceOpponentStatus"></p>
       </div>
     </section>
 

@@ -345,16 +345,18 @@ function showVerdict(color, shape, result) {
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
   rematchPanel.classList.add('is-hidden');
   window.setTimeout(() => {
-    if (!result?.winner || !result?.loser) return;
+    if (!result?.winner || !result?.loser || result.series?.complete) return;
     const loser = result.loser.id === socketState.player;
     const winner = result.winner.id === socketState.player;
     if (!loser) return;
     rematchPanel.classList.remove('is-hidden');
     const loserScore = result.series?.scores?.find((score) => score.id === socketState.player);
+    const opponentScore = result.series?.scores?.find((score) => score.id !== socketState.player);
     const seriesIsTied = Boolean(result.series?.target && loserScore && loserScore.wins === loserScore.losses);
+    const twoZeroBestOfThree = result.series?.target === 3 && (opponentScore?.wins || 0) >= 2 && (loserScore?.wins || 0) === 0;
     bestOfThreeButton.textContent = seriesIsTied ? 'Break the Tie' : 'Best of 3';
-    bestOfThreeButton.classList.toggle('is-hidden', !loser);
-    bestOfFiveButton.classList.toggle('is-hidden', !loser || (!seriesIsTied && (loserScore?.losses || 0) < 2));
+    bestOfThreeButton.classList.toggle('is-hidden', !loser || twoZeroBestOfThree);
+    bestOfFiveButton.classList.toggle('is-hidden', !loser || (!seriesIsTied && !twoZeroBestOfThree && (loserScore?.losses || 0) < 2));
     acceptRematchButton.classList.add('is-hidden');
     declineRematchButton.classList.add('is-hidden');
     rematchPrompt.textContent = 'Choose a rematch format.';

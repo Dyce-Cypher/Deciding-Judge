@@ -39,6 +39,7 @@ function fadeBetween(update, reveal = true) {
   transitionOverlay.classList.add('is-active');
   window.setTimeout(() => {
     update();
+    window.requestAnimationFrame(positionBackButton);
     if (reveal) window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 260);
   }, 420);
 }
@@ -56,6 +57,15 @@ function clearRoomSelection() {
   newRoomName.classList.remove('is-set', 'is-focused');
   selectedRoomName = '';
   document.querySelectorAll('.room-entry').forEach((entry) => entry.classList.remove('is-selected'));
+}
+
+function positionBackButton() {
+  if (backButton.classList.contains('is-hidden')) return;
+  const activeStep = [shapeStep, colorStep, roomStep].find((step) => !step.classList.contains('is-hidden'));
+  if (!activeStep) return;
+  const bounds = activeStep.getBoundingClientRect();
+  backButton.style.left = `${Math.max(12, bounds.left - 42)}px`;
+  backButton.style.top = `${bounds.top + (bounds.height / 2)}px`;
 }
 
 function renderRoomDirectory(rooms) {
@@ -309,3 +319,4 @@ document.querySelector('#leaveButton').addEventListener('click', () => {
   });
 });
 connectSocket();
+window.addEventListener('resize', positionBackButton);

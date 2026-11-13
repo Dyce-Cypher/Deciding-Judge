@@ -47,7 +47,6 @@ const diceInstruction = document.querySelector('#diceInstruction');
 const diceHand = document.querySelector('#diceHand');
 const rerollDiceButton = document.querySelector('#rerollDiceButton');
 const callDiceButton = document.querySelector('#callDiceButton');
-const diceOpponentStatus = document.querySelector('#diceOpponentStatus');
 const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
 let renderedCardCount = 0;
@@ -85,20 +84,37 @@ function cardSymbol(card) {
 }
 function diceSymbol(value) { return String.fromCodePoint(0x2680 + value - 1); }
 
+function animateDie(die, finalValue) {
+  let frame = 0;
+  const totalFrames = 11;
+  const settle = () => {
+    if (frame >= totalFrames) {
+      die.textContent = diceSymbol(finalValue);
+      die.classList.remove('is-rolling');
+      return;
+    }
+    die.textContent = diceSymbol(Math.floor(Math.random() * 6) + 1);
+    die.classList.add('is-rolling');
+    frame += 1;
+    window.setTimeout(settle, 35 + (frame * 22));
+  };
+  settle();
+}
+
 function renderDiceState(message) {
   const myTurn = message.currentPlayerId === socketState.player;
   const canAct = myTurn && !message.called;
-  diceInstruction.textContent = myTurn ? 'Select dice to reroll, or call your hand.' : 'Waiting for the other player.';
-  diceOpponentStatus.textContent = message.opponentCalled ? 'The other player has called.' : `Other player rolls: ${message.opponentRolls || 0}`;
+  diceInstruction.textContent = canAct ? 'Select die to reroll.' : 'Waiting for the other player.';
   diceHand.innerHTML = (message.dice || []).map((value, index) => `<button class="die${selectedDice.has(index) ? ' is-selected' : ''}" type="button" data-index="${index}" ${canAct ? '' : 'disabled'} aria-label="Die showing ${value}">${diceSymbol(value)}</button>`).join('');
   diceHand.querySelectorAll('.die').forEach((die) => die.addEventListener('click', () => {
     const index = Number(die.dataset.index);
     if (selectedDice.has(index)) selectedDice.delete(index); else if (selectedDice.size < 5) selectedDice.add(index);
     die.classList.toggle('is-selected', selectedDice.has(index));
-    rerollDiceButton.disabled = !canAct || selectedDice.size === 0 || message.rolls >= 3;
+    rerollDiceButton.disabled = !canAct || selectedDice.size === 0;
   }));
-  rerollDiceButton.disabled = !canAct || selectedDice.size === 0 || message.rolls >= 3;
-  callDiceButton.disabled = !canAct || message.rolls < 3;
+  diceHand.querySelectorAll('.die').forEach((die, index) => animateDie(die, message.dice[index]));
+  rerollDiceButton.disabled = !canAct || selectedDice.size === 0;
+  callDiceButton.disabled = !canAct;
   diceOverlay.className = `dice-overlay dice-overlay--${message.currentPlayerColor || 'white'} is-visible`;
   diceOverlay.setAttribute('aria-hidden', 'false');
 }

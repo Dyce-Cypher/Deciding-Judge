@@ -278,7 +278,18 @@ websocketServer.on('connection', (socket) => {
       if (selected.length > 5) return;
       selected.forEach((index) => { hand.dice[index] = crypto.randomInt(1, 7); });
       hand.rolls += 1;
+      if (hand.rolls >= 3) hand.called = true;
       const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+      if (hand.called && otherPlayer && session.hands.get(otherPlayer.id).called) {
+        const players = [...player.room.players.values()];
+        const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
+        const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
+        const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
+        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null };
+        player.room.diceSession = null;
+        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
+        return broadcast(player.room, diceResult);
+      }
       session.currentPlayerId = otherPlayer.id;
       sendDiceStates(player.room, session);
       return;
@@ -287,7 +298,7 @@ websocketServer.on('connection', (socket) => {
     if (message.type === 'diceCall' && player.room?.diceSession) {
       const session = player.room.diceSession;
       const hand = session.hands.get(player.id);
-      if (session.currentPlayerId !== player.id || hand.called || hand.rolls < 3) return;
+      if (session.currentPlayerId !== player.id || hand.called) return;
       hand.called = true;
       const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
       if (!otherPlayer || session.hands.get(otherPlayer.id).called) {

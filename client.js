@@ -145,13 +145,13 @@ function renderStrawDraw(message) {
     const drawn = drawnIds.has(strawData.id);
     if (drawn) return;
     const strawButton = document.createElement('button');
-    strawButton.className = `straw-choice${strawData.crop ? ' is-cropped' : ''}${drawn ? ' is-drawn' : ''}`;
+    strawButton.className = `straw-choice${strawData.short ? ' is-short' : ''}${drawn ? ' is-drawn' : ''}`;
     strawButton.type = 'button';
     strawButton.style.setProperty('--straw-height', `${strawData.height}px`);
     strawButton.style.setProperty('--straw-tilt', `${strawData.angle || 0}deg`);
     strawButton.disabled = drawn || !myTurn;
     strawButton.setAttribute('aria-label', drawn ? 'Straw already drawn' : 'Draw this straw');
-    strawButton.innerHTML = '<img src="/Element/match_stick.png" alt="" />';
+    strawButton.innerHTML = `<img src="${strawData.short ? '/Element/match_stick_short.png' : '/Element/match_stick.png'}" alt="" />`;
     if (!drawn && myTurn) strawButton.addEventListener('click', () => {
       strawButton.disabled = true;
       strawButton.classList.add('is-flying');

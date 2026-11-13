@@ -92,7 +92,7 @@ websocketServer.on('connection', (socket) => {
       const straws = Array.from({ length: strawCount }, (_, index) => ({
         id: `straw-${index}`,
         height: 220,
-        crop: index === shortIndex,
+        short: index === shortIndex,
         angle: crypto.randomInt(-4, 5),
       }));
       const tallies = new Map([...player.room.players.values()].map((roomPlayer) => [roomPlayer.id, 0]));

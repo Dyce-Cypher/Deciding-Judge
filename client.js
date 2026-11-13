@@ -66,7 +66,8 @@ function positionBackButton() {
   const selectionBox = [...activeStep.querySelectorAll('.shape-options, .color-options, .room-list, .room-variable')]
     .find((element) => !element.classList.contains('is-hidden'));
   const bounds = (selectionBox || activeStep).getBoundingClientRect();
-  backButton.style.left = `${Math.max(12, bounds.left - 42)}px`;
+  const arrowGap = 18;
+  backButton.style.left = `${Math.max(12, bounds.left - backButton.offsetWidth - arrowGap)}px`;
   backButton.style.top = `${bounds.top + (bounds.height / 2)}px`;
 }
 

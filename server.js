@@ -11,7 +11,7 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
+function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, series: { wins: new Map(), losses: new Map(), target: null }, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
 
@@ -62,6 +62,12 @@ function publicDiceState(room, session, playerId) {
   return { type: 'diceUpdate', dice: hand.dice, rolls: hand.rolls, called: hand.called, currentPlayerId: playerId, currentPlayerColor: room.players.get(playerId)?.color || currentPlayer?.color || 'white', opponentCalled: session.hands.get(opponent)?.called || false, opponentRolls: session.hands.get(opponent)?.rolls || 0 };
 }
 function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
+function recordSeriesResult(room, winnerId, loserId, method) {
+  room.series.wins.set(winnerId, (room.series.wins.get(winnerId) || 0) + 1);
+  room.series.losses.set(loserId, (room.series.losses.get(loserId) || 0) + 1);
+  room.lastResult = { winnerId, loserId, method };
+  return { method, winnerId, loserId, target: room.series.target, scores: [...room.players.keys()].map((id) => ({ id, wins: room.series.wins.get(id) || 0, losses: room.series.losses.get(id) || 0 })) };
+}
 
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function broadcast(room, message) { room.players.forEach((player) => send(player.socket, message)); }
@@ -116,8 +122,10 @@ websocketServer.on('connection', (socket) => {
     if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
       const players = [...player.room.players.values()];
       const winner = players[crypto.randomInt(players.length)];
-      player.room.result = { winnerId: winner.id, color: winner.color };
-      return broadcast(player.room, { type: 'result', winner: { id: winner.id, color: winner.color, shape: winner.shape } });
+      const loser = players.find((candidate) => candidate.id !== winner.id);
+      const series = recordSeriesResult(player.room, winner.id, loser.id, 'judge');
+      player.room.result = { winnerId: winner.id, color: winner.color, method: 'judge', series };
+      return broadcast(player.room, { type: 'result', series, winner: { id: winner.id, color: winner.color, shape: winner.shape }, loser: { id: loser.id, color: loser.color, shape: loser.shape } });
     }
 
     if (message.type === 'straws' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
@@ -149,9 +157,10 @@ websocketServer.on('connection', (socket) => {
           .filter((candidate) => candidate.id !== loser.id)
           .sort((left, right) => (session.tallies.get(right.id) || 0) - (session.tallies.get(left.id) || 0))[0];
         player.room.strawSession = null;
-        player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', tallies: publicStrawTallies(player.room, session) };
+        const series = recordSeriesResult(player.room, winner.id, loser.id, 'straws');
+        player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', tallies: publicStrawTallies(player.room, session), series };
         return broadcast(player.room, {
-          type: 'result', method: 'straws', tallies: publicStrawTallies(player.room, session),
+          type: 'result', method: 'straws', series, tallies: publicStrawTallies(player.room, session),
           winner: { id: winner.id, color: winner.color, shape: winner.shape },
           loser: { id: loser.id, color: loser.color, shape: loser.shape },
         });
@@ -165,9 +174,11 @@ websocketServer.on('connection', (socket) => {
       const loser = player.room.players.get(loserDraw.playerId);
       const winner = [...player.room.players.values()].find((candidate) => candidate.id !== loser.id);
       player.room.strawSession = null;
-      player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws' };
+      const series = recordSeriesResult(player.room, winner.id, loser.id, 'straws');
+      player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', series };
       return broadcast(player.room, {
         type: 'result',
+        series,
         method: 'straws',
         winner: { id: winner.id, color: winner.color, shape: winner.shape },
         loser: { id: loser.id, color: loser.color, shape: loser.shape },
@@ -202,6 +213,8 @@ websocketServer.on('connection', (socket) => {
         type: 'gestureResult',
         choices: { [first.id]: firstChoice, [second.id]: secondChoice },
         winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null,
+        loser: winner ? { id: winner.id === first.id ? second.id : first.id, color: winner.id === first.id ? second.color : first.color, shape: winner.id === first.id ? second.shape : first.shape } : null,
+        series: winner ? recordSeriesResult(player.room, winner.id, winner.id === first.id ? second.id : first.id, 'gesture') : null,
       };
       player.room.gestureSession = winner ? null : { choices: new Map() };
       player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'gesture' } : null;
@@ -249,7 +262,9 @@ websocketServer.on('connection', (socket) => {
         const winner = firstTotal === secondTotal ? null : (firstTotal > secondTotal ? players[0] : players[1]);
         player.room.cardSession = null;
         player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'cards', collections } : null;
-        return broadcast(player.room, { type: 'cardResult', method: 'cards', collections, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null });
+        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'cards') : null;
+        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
+        return broadcast(player.room, { type: 'cardResult', method: 'cards', collections, series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null });
       }
       const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
       session.currentPlayerId = otherPlayer.id;
@@ -282,7 +297,9 @@ websocketServer.on('connection', (socket) => {
         const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
         const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
         const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
-        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null };
+        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'dice') : null;
+        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
+        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null };
         player.room.diceSession = null;
         player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
         return broadcast(player.room, diceResult);
@@ -302,12 +319,37 @@ websocketServer.on('connection', (socket) => {
         const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
         const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
         const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
-        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null };
+        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'dice') : null;
+        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
+        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null };
         player.room.diceSession = null;
         player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
         return broadcast(player.room, diceResult);
       }
       return sendDiceStates(player.room, session);
+    }
+
+    if (message.type === 'rematchRequest' && player.room?.lastResult) {
+      const bestOf = [3, 5].includes(Number(message.bestOf)) ? Number(message.bestOf) : 3;
+      if (player.id !== player.room.lastResult.loserId) return;
+      player.room.series.target = bestOf;
+      const winner = player.room.players.get(player.room.lastResult.winnerId);
+      if (winner) send(winner.socket, { type: 'rematchOffer', bestOf, scores: player.room.lastResult.series?.scores || [] });
+      return;
+    }
+
+    if (message.type === 'rematchResponse' && player.room?.lastResult && player.id === player.room.lastResult.winnerId) {
+      const loser = player.room.players.get(player.room.lastResult.loserId);
+      if (!loser) return;
+      if (message.accepted) {
+        player.room.result = null;
+        player.room.strawSession = null;
+        player.room.gestureSession = null;
+        player.room.cardSession = null;
+        player.room.diceSession = null;
+        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
+      }
+      return send(loser.socket, { type: 'rematchDeclined' });
     }
   });
 

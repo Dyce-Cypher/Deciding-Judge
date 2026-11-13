@@ -27,6 +27,12 @@ const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
 const verdictWinner = document.querySelector('#verdictWinner');
 const verdictSubtext = document.querySelector('#verdictSubtext');
+const rematchPanel = document.querySelector('#rematchPanel');
+const rematchPrompt = document.querySelector('#rematchPrompt');
+const bestOfThreeButton = document.querySelector('#bestOfThreeButton');
+const bestOfFiveButton = document.querySelector('#bestOfFiveButton');
+const acceptRematchButton = document.querySelector('#acceptRematchButton');
+const declineRematchButton = document.querySelector('#declineRematchButton');
 const transitionOverlay = document.querySelector('#transitionOverlay');
 const selectedColorGlow = document.querySelector('#selectedColorGlow');
 const strawOverlay = document.querySelector('#strawOverlay');
@@ -51,6 +57,7 @@ const socketState = { socket: null, player: null, hostId: null, shape: null, col
 let selectedRoomName = '';
 let renderedCardCount = 0;
 let selectedDice = new Set();
+let currentRoomState = null;
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
@@ -218,6 +225,7 @@ function joinRoom(roomName) {
 }
 
 function renderRoom(room) {
+  currentRoomState = room;
   // The first player in the room is the creator and remains the host.
   // Derive this from the ordered player list so older room messages cannot disable the host controls.
   socketState.hostId = room.players[0]?.id || null;
@@ -327,6 +335,20 @@ function showVerdict(color, shape, result) {
     : result?.method === 'straws'
     ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'Opponent came short. Meeting adjourned')
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
+  rematchPanel.classList.add('is-hidden');
+  window.setTimeout(() => {
+    if (!result?.winner || !result?.loser) return;
+    const loser = result.loser.id === socketState.player;
+    const winner = result.winner.id === socketState.player;
+    if (!loser && !winner) return;
+    rematchPanel.classList.remove('is-hidden');
+    bestOfThreeButton.classList.toggle('is-hidden', !loser);
+    const loserScore = result.series?.scores?.find((score) => score.id === socketState.player);
+    bestOfFiveButton.classList.toggle('is-hidden', !loser || (loserScore?.losses || 0) < 2);
+    acceptRematchButton.classList.toggle('is-hidden', !winner);
+    declineRematchButton.classList.toggle('is-hidden', !winner);
+    rematchPrompt.textContent = loser ? 'Choose a rematch format.' : 'The other player has requested a rematch.';
+  }, 2000);
   verdictOverlay.setAttribute('aria-hidden', 'false');
   verdictOverlay.classList.add('is-visible');
 }
@@ -388,7 +410,14 @@ function connectSocket() {
     if (message.type === 'gestureUpdate') {
       gestureInstruction.textContent = 'Waiting for the other player.';
     }
-    if (message.type === 'gestureResult') showGestureResult(message);
+    if (message.type === 'gestureResult') {
+      showGestureResult(message);
+      if (message.winner) {
+        gestureOverlay.classList.remove('is-visible');
+        gestureOverlay.setAttribute('aria-hidden', 'true');
+        showVerdict(message.winner.color, message.winner.shape, { ...message, method: 'gesture' });
+      }
+    }
     if (message.type === 'cardsStart' || message.type === 'cardUpdate') renderCardGame(message);
     if (message.type === 'cardResult') {
       renderCardCollections(message.collections);
@@ -409,6 +438,22 @@ function connectSocket() {
       diceOverlay.setAttribute('aria-hidden', 'true');
       showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'dice' });
     }
+    if (message.type === 'rematchOffer') {
+      rematchPanel.classList.remove('is-hidden');
+      bestOfThreeButton.classList.add('is-hidden');
+      bestOfFiveButton.classList.add('is-hidden');
+      acceptRematchButton.classList.remove('is-hidden');
+      declineRematchButton.classList.remove('is-hidden');
+      rematchPrompt.textContent = `The other player requests a best of ${message.bestOf} rematch.`;
+    }
+    if (message.type === 'rematchReady') {
+      verdictOverlay.classList.remove('is-visible');
+      verdictOverlay.setAttribute('aria-hidden', 'true');
+      rematchPanel.classList.add('is-hidden');
+      roomView.classList.remove('is-hidden');
+      renderRoom(currentRoomState);
+    }
+    if (message.type === 'rematchDeclined') rematchPrompt.textContent = 'Rematch declined.';
     if (message.type === 'gameDenied') resultElement.textContent = message.message;
     if (message.type === 'result') {
       strawOverlay.classList.remove('is-visible');
@@ -505,6 +550,10 @@ strawButton.addEventListener('click', () => send('straws'));
 gestureButton.addEventListener('click', () => send('gestureStart'));
 cardsButton.addEventListener('click', () => send('cardsStart'));
 diceButton.addEventListener('click', () => send('diceStart'));
+bestOfThreeButton.addEventListener('click', () => send('rematchRequest', { bestOf: 3 }));
+bestOfFiveButton.addEventListener('click', () => send('rematchRequest', { bestOf: 5 }));
+acceptRematchButton.addEventListener('click', () => send('rematchResponse', { accepted: true }));
+declineRematchButton.addEventListener('click', () => send('rematchResponse', { accepted: false }));
 rerollDiceButton.addEventListener('click', () => {
   send('diceRoll', { indices: [...selectedDice] });
   selectedDice = new Set();

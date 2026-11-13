@@ -43,6 +43,7 @@ const cardCollections = document.querySelector('#cardCollections');
 const cardDeck = document.querySelector('#cardDeck');
 const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
+let renderedCardCount = 0;
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
@@ -77,13 +78,15 @@ function cardSymbol(card) {
 
 function renderCardCollections(collections) {
   const playerCollection = (collections || []).find((collection) => collection.id === socketState.player);
-  cardCollections.innerHTML = playerCollection
-    ? `<div class="card-collection"><div class="collected-cards">${playerCollection.cards.map((card) => `<span class="collected-card" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div></div>`
-    : '';
+  if (!playerCollection) { cardCollections.innerHTML = ''; return; }
+  const cards = playerCollection.cards || [];
+  cardCollections.innerHTML = `<div class="card-collection"><div class="collected-cards">${cards.map((card, index) => `<span class="collected-card${index >= renderedCardCount ? ' is-new-card' : ''}" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div></div>`;
+  renderedCardCount = cards.length;
 }
 
 function renderCardGame(message) {
   const picked = new Set(message.picked || []);
+  if (!message.picked || message.picked.length === 0) renderedCardCount = 0;
   const turnPlayer = (message.collections || []).find((collection) => collection.id === message.currentPlayerId);
   const turnColor = message.currentPlayerColor || turnPlayer?.color || socketState.color || 'white';
   cardsInstruction.textContent = message.currentPlayerId === socketState.player ? 'Your turn. Pick one card.' : 'Waiting for the other player.';

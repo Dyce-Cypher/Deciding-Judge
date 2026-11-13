@@ -37,6 +37,7 @@ const gestureInstruction = document.querySelector('#gestureInstruction');
 const gestureChoices = document.querySelector('#gestureChoices');
 const gestureReveal = document.querySelector('#gestureReveal');
 const cardsOverlay = document.querySelector('#cardsOverlay');
+const cardsTurnGlow = document.querySelector('#cardsTurnGlow');
 const cardsInstruction = document.querySelector('#cardsInstruction');
 const cardCollections = document.querySelector('#cardCollections');
 const cardDeck = document.querySelector('#cardDeck');
@@ -100,6 +101,7 @@ function renderCardGame(message) {
     cardDeck.appendChild(cardButton);
   });
   cardsOverlay.className = `cards-overlay cards-overlay--${message.currentPlayerColor || 'white'} is-visible`;
+  cardsTurnGlow.className = `cards-turn-glow cards-turn-glow--${message.currentPlayerColor || 'white'}`;
   cardsOverlay.setAttribute('aria-hidden', 'false');
 }
 

@@ -229,6 +229,8 @@ function renderRoom(room) {
   room.players.slice(0, 2).forEach((player, index) => {
     const token = document.createElement('span');
     token.className = `player-token player-token--${player.color}`;
+    const hostPlayer = room.players.find((roomPlayer) => roomPlayer.id === socketState.hostId);
+    if (hostPlayer && player.id !== hostPlayer.id && player.color === hostPlayer.color) token.style.background = sameColorShifts[player.color];
     token.innerHTML = shapeMarkup(player.shape);
     token.setAttribute('aria-label', `${player.color} ${player.shape}`);
     duelElement.appendChild(token);
@@ -248,15 +250,11 @@ function renderRoom(room) {
   playersElement.appendChild(duelElement);
   const ready = room.players.length === 2;
   if (ready) {
-    const currentPlayer = room.players.find((player) => player.id === socketState.player) || room.players[0];
-    const otherPlayer = room.players.find((player) => player.id !== currentPlayer.id) || room.players[1];
-    if (currentPlayer.color === otherPlayer.color) {
-      roomCombinedGlow.style.background = `linear-gradient(135deg, ${sameColorShifts[currentPlayer.color]}, var(--${currentPlayer.color}) 68%, var(--${currentPlayer.color}))`;
-      roomCombinedGlow.classList.add('is-same-color');
-    } else {
-      roomCombinedGlow.style.background = `linear-gradient(135deg, var(--${currentPlayer.color}), var(--${otherPlayer.color}))`;
-      roomCombinedGlow.classList.remove('is-same-color');
-    }
+    const hostPlayer = room.players.find((player) => player.id === socketState.hostId) || room.players[0];
+    const guestPlayer = room.players.find((player) => player.id !== hostPlayer.id) || room.players[1];
+    const guestColor = hostPlayer.color === guestPlayer.color ? sameColorShifts[guestPlayer.color] : `var(--${guestPlayer.color})`;
+    roomCombinedGlow.style.background = `linear-gradient(135deg, var(--${hostPlayer.color}), ${guestColor})`;
+    roomCombinedGlow.classList.remove('is-same-color');
     roomCombinedGlow.classList.add('is-visible');
   } else {
     roomCombinedGlow.classList.remove('is-visible');

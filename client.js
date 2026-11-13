@@ -28,6 +28,7 @@ const selectedColorGlow = document.querySelector('#selectedColorGlow');
 const strawOverlay = document.querySelector('#strawOverlay');
 const strawInstruction = document.querySelector('#strawInstruction');
 const strawChoices = document.querySelector('#strawChoices');
+const strawTallies = document.querySelector('#strawTallies');
 const socketState = { socket: null, player: null, shape: null, color: null };
 let selectedRoomName = '';
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
@@ -132,6 +133,14 @@ function renderStrawDraw(message) {
   const drawnIds = new Set(message.drawn.map((draw) => draw.strawId));
   const myTurn = message.currentPlayerId === socketState.player;
   strawInstruction.textContent = myTurn ? 'Your turn. Choose one.' : 'Waiting for the other player to draw.';
+  strawTallies.innerHTML = '';
+  (message.tallies || []).forEach((tally) => {
+    const tallyElement = document.createElement('div');
+    tallyElement.className = 'straw-tally';
+    tallyElement.innerHTML = `<span class="straw-tally-symbol straw-symbol--${tally.color}">${shapeMarkup(tally.shape)}</span><strong>${tally.count}</strong>`;
+    tallyElement.setAttribute('aria-label', `${tally.color} player has ${tally.count} safe straws`);
+    strawTallies.appendChild(tallyElement);
+  });
   (message.straws || []).forEach((strawData, index) => {
     const drawn = drawnIds.has(strawData.id);
     if (drawn) return;

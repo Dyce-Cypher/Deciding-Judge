@@ -25,6 +25,10 @@ function publicRoomDirectory() {
     .map((room) => ({ name: room.name, players: [...room.players.values()].map(({ color, shape }) => ({ color, shape })) }));
 }
 
+function publicStrawTallies(room, session) {
+  return [...room.players.values()].map((roomPlayer) => ({ id: roomPlayer.id, color: roomPlayer.color, shape: roomPlayer.shape, count: session.tallies.get(roomPlayer.id) || 0 }));
+}
+
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function broadcast(room, message) { room.players.forEach((player) => send(player.socket, message)); }
 function broadcastRoom(room) { broadcast(room, { type: 'room', room: publicRoom(room) }); }
@@ -90,18 +94,35 @@ websocketServer.on('connection', (socket) => {
         height: index === shortIndex ? 84 : crypto.randomInt(210, 231),
         angle: crypto.randomInt(-4, 5),
       }));
-      player.room.strawSession = { shortStrawId: `straw-${shortIndex}`, currentPlayerId: player.id, drawn: [], straws };
-      return broadcast(player.room, { type: 'strawStart', straws, currentPlayerId: player.id, currentPlayerColor: player.color, drawn: [] });
+      const tallies = new Map([...player.room.players.values()].map((roomPlayer) => [roomPlayer.id, 0]));
+      player.room.strawSession = { shortStrawId: `straw-${shortIndex}`, currentPlayerId: player.id, drawn: [], straws, tallies };
+      return broadcast(player.room, { type: 'strawStart', straws, currentPlayerId: player.id, currentPlayerColor: player.color, drawn: [], tallies: publicStrawTallies(player.room, player.room.strawSession) });
     }
 
     if (message.type === 'drawStraw' && player.room?.strawSession) {
       const session = player.room.strawSession;
       if (session.currentPlayerId !== player.id || !session.straws.some((straw) => straw.id === message.strawId) || session.drawn.some((draw) => draw.strawId === message.strawId)) return;
       session.drawn.push({ playerId: player.id, strawId: message.strawId });
+      const drewShortStraw = message.strawId === session.shortStrawId;
+      if (!drewShortStraw) session.tallies.set(player.id, (session.tallies.get(player.id) || 0) + 1);
+      if (drewShortStraw) {
+        const players = [...player.room.players.values()];
+        const loser = player;
+        const winner = players
+          .filter((candidate) => candidate.id !== loser.id)
+          .sort((left, right) => (session.tallies.get(right.id) || 0) - (session.tallies.get(left.id) || 0))[0];
+        player.room.strawSession = null;
+        player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', tallies: publicStrawTallies(player.room, session) };
+        return broadcast(player.room, {
+          type: 'result', method: 'straws', tallies: publicStrawTallies(player.room, session),
+          winner: { id: winner.id, color: winner.color, shape: winner.shape },
+          loser: { id: loser.id, color: loser.color, shape: loser.shape },
+        });
+      }
       if (session.drawn.length < session.straws.length) {
         const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
         session.currentPlayerId = otherPlayer.id;
-        return broadcast(player.room, { type: 'strawUpdate', straws: session.straws, drawn: session.drawn, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color });
+        return broadcast(player.room, { type: 'strawUpdate', straws: session.straws, drawn: session.drawn, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color, tallies: publicStrawTallies(player.room, session) });
       }
       const loserDraw = session.drawn.find((draw) => draw.strawId === session.shortStrawId) || session.drawn[0];
       const loser = player.room.players.get(loserDraw.playerId);

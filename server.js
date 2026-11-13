@@ -14,10 +14,11 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, series: { wins: new Map(), losses: new Map(), target: null, meetings: 0 }, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
+function gameChooserId(room) { return room.series?.target && room.series.chooserId ? room.series.chooserId : hostId(room); }
 
 function publicRoom(room) {
   const players = [...room.players.values()];
-  return { name: room.name, hostId: room.hostId || hostId(room), series: { target: room.series.target, meetings: room.series.meetings }, players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
+  return { name: room.name, hostId: room.hostId || hostId(room), series: { target: room.series.target, meetings: room.series.meetings, chooserId: room.series.chooserId || null }, players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
 }
 
 // The lobby only receives the information needed to show room availability.
@@ -64,6 +65,7 @@ function publicDiceState(room, session, playerId) {
 function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
 function recordSeriesResult(room, winnerId, loserId, method) {
   room.series.meetings += 1;
+  if (room.series.target) room.series.chooserId = loserId;
   room.series.wins.set(winnerId, (room.series.wins.get(winnerId) || 0) + 1);
   room.series.losses.set(loserId, (room.series.losses.get(loserId) || 0) + 1);
   room.lastResult = { winnerId, loserId, method };
@@ -116,11 +118,11 @@ websocketServer.on('connection', (socket) => {
       return broadcastRoomDirectory();
     }
 
-    if (['judge', 'straws', 'gestureStart'].includes(message.type) && player.room && player.room.players.size === 2 && player.id !== hostId(player.room)) {
-      return send(socket, { type: 'gameDenied', message: 'Only the host can choose the game.' });
+    if (['judge', 'straws', 'gestureStart', 'cardsStart', 'diceStart'].includes(message.type) && player.room && player.room.players.size === 2 && player.id !== gameChooserId(player.room)) {
+      return send(socket, { type: 'gameDenied', message: player.room.series?.target ? 'Only the current series chooser can choose the game.' : 'Only the host can choose the game.' });
     }
 
-    if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+    if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
       const players = [...player.room.players.values()];
       const winner = players[crypto.randomInt(players.length)];
       const loser = players.find((candidate) => candidate.id !== winner.id);
@@ -129,7 +131,7 @@ websocketServer.on('connection', (socket) => {
       return broadcast(player.room, { type: 'result', series, winner: { id: winner.id, color: winner.color, shape: winner.shape }, loser: { id: loser.id, color: loser.color, shape: loser.shape } });
     }
 
-    if (message.type === 'straws' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+    if (message.type === 'straws' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
       if (player.room.strawSession) return;
       const argumentLength = [...player.room.players.values()].reduce((total, roomPlayer) => total + roomPlayer.argument.length, 0);
       const strawCount = Math.max(3, Math.min(18, argumentLength));
@@ -186,7 +188,7 @@ websocketServer.on('connection', (socket) => {
       });
     }
 
-    if (message.type === 'gestureStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+    if (message.type === 'gestureStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
       if (player.room.gestureSession) return;
       player.room.gestureSession = { choices: new Map() };
       return broadcast(player.room, { type: 'gestureStart', selectedPlayerIds: [] });
@@ -222,7 +224,7 @@ websocketServer.on('connection', (socket) => {
       return broadcast(player.room, gestureResult);
     }
 
-    if (message.type === 'cardsStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+    if (message.type === 'cardsStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
       if (player.room.cardSession) return;
       const suits = [
         { name: 'spades', offset: 0 },
@@ -272,7 +274,7 @@ websocketServer.on('connection', (socket) => {
       return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color, collections });
     }
 
-    if (message.type === 'diceStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+    if (message.type === 'diceStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
       if (player.room.diceSession) return;
       const players = [...player.room.players.values()];
       player.room.diceSession = {
@@ -334,6 +336,7 @@ websocketServer.on('connection', (socket) => {
       const bestOf = [3, 5].includes(Number(message.bestOf)) ? Number(message.bestOf) : 3;
       if (player.id !== player.room.lastResult.loserId) return;
       player.room.series.target = bestOf;
+      player.room.series.chooserId = player.id;
       const winner = player.room.players.get(player.room.lastResult.winnerId);
       if (winner) send(winner.socket, { type: 'rematchOffer', bestOf, meetingNumber: player.room.series.meetings + 1, scores: player.room.lastResult.series?.scores || [] });
       return;
@@ -348,7 +351,7 @@ websocketServer.on('connection', (socket) => {
         player.room.gestureSession = null;
         player.room.cardSession = null;
         player.room.diceSession = null;
-        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, meetingNumber: player.room.series.meetings + 1, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
+        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, chooserId: player.room.series.chooserId, meetingNumber: player.room.series.meetings + 1, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
       }
       return send(loser.socket, { type: 'rematchDeclined' });
     }

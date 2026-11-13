@@ -275,13 +275,15 @@ function renderRoom(room) {
     roomCombinedGlow.classList.remove('is-same-color');
   }
   const isHost = socketState.player === socketState.hostId;
-  judgeButton.disabled = !ready || !isHost;
-  strawButton.disabled = !ready || !isHost;
-  gestureButton.disabled = !ready || !isHost;
-  cardsButton.disabled = !ready || !isHost;
-  diceButton.disabled = !ready || !isHost;
+  const chooserId = room.series?.target && room.series.chooserId ? room.series.chooserId : socketState.hostId;
+  const canChooseGame = socketState.player === chooserId;
+  judgeButton.disabled = !ready || !canChooseGame;
+  strawButton.disabled = !ready || !canChooseGame;
+  gestureButton.disabled = !ready || !canChooseGame;
+  cardsButton.disabled = !ready || !canChooseGame;
+  diceButton.disabled = !ready || !canChooseGame;
   [judgeButton, strawButton, gestureButton, cardsButton, diceButton].forEach((button) => {
-    button.title = isHost ? '' : 'Only the host can choose the game.';
+    button.title = canChooseGame ? '' : (room.series?.target ? 'The previous loser chooses the next game.' : 'Only the host can choose the game.');
   });
 }
 
@@ -456,7 +458,7 @@ function connectSocket() {
     }
     if (message.type === 'rematchReady') {
       nextMeetingNumber = message.meetingNumber || 2;
-      currentRoomState.series = { target: message.bestOf, meetings: nextMeetingNumber - 1 };
+      currentRoomState.series = { target: message.bestOf, meetings: nextMeetingNumber - 1, chooserId: message.chooserId };
       verdictOverlay.classList.remove('is-visible');
       verdictOverlay.setAttribute('aria-hidden', 'true');
       rematchPanel.classList.add('is-hidden');

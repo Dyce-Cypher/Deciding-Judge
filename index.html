@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Deciding Judge - a quick, fair way for two people to make a choice." />
+    <title>Deciding Judge</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="selected-color-glow" id="selectedColorGlow" aria-hidden="true"></div>
+
+    <main class="login-page" id="loginView">
+      <section class="login-card" aria-labelledby="page-title">
+        <header class="page-header">
+          <p class="eyebrow eyebrow-brand"><button class="eyebrow-icon-button" id="kingShapeButton" type="button" aria-label="Choose King"><img src="/Element/Royal%20Rat%20Insignia.png" alt="" /></button><span id="pageEyebrow">King of Nothing Presents</span></p>
+          <h1 id="page-title">Deciding<br /><span>Judge</span></h1>
+          <p class="intro" id="stepInstruction">Choose a shape to begin.</p>
+        </header>
+
+        <!-- One step is visible at a time so the setup stays quick and focused. -->
+        <form id="roomForm" class="room-form">
+          <section class="fate-step" id="shapeStep" aria-labelledby="shapeTitle">
+            <div class="shape-options">
+              <button class="shape-option" type="button" data-shape="diamond" aria-label="Diamond">◆</button>
+              <button class="shape-option" type="button" data-shape="spade" aria-label="Spade">♠</button>
+              <button class="shape-option" type="button" data-shape="club" aria-label="Club">♣</button>
+              <button class="shape-option" type="button" data-shape="heart" aria-label="Heart">♥</button>
+            </div>
+          </section>
+
+          <section class="fate-step is-hidden" id="colorStep">
+            <div class="selected-shape" id="selectedShape" aria-label="Selected shape"></div>
+            <div class="color-options">
+              <button class="color-option color-option--red" type="button" data-color="red"><span class="color-swatch"></span><span>Red</span></button>
+              <button class="color-option color-option--blue" type="button" data-color="blue"><span class="color-swatch"></span><span>Blue</span></button>
+              <button class="color-option color-option--yellow" type="button" data-color="yellow"><span class="color-swatch"></span><span>Yellow</span></button>
+              <button class="color-option color-option--green" type="button" data-color="green"><span class="color-swatch"></span><span>Green</span></button>
+            </div>
+          </section>
+
+          <section class="fate-step is-hidden" id="roomStep" aria-labelledby="roomTitleLabel">
+            <div id="roomList" class="room-list is-hidden" aria-live="polite"><p class="directory-empty">Loading rooms...</p></div>
+            <input id="newRoomName" class="room-variable" type="text" maxlength="24" placeholder="State your case" autocomplete="off" aria-label="Your argument" />
+            <button class="create-room-button is-hidden" id="createRoomButton" type="submit">Create a Hearing</button>
+            <button class="stand-trial-button is-hidden" id="standTrialButton" type="button">Stand Trail</button>
+          </section>
+          <p class="form-message" id="formMessage" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <main class="room-page is-hidden" id="roomView">
+      <section class="room-card" aria-labelledby="joinedRoomTitle">
+        <div class="room-topline"><button class="text-button exit-button" id="leaveButton" type="button" aria-label="Exit room">⎋</button></div>
+        <p class="eyebrow" id="meetingLabel">Meeting in Session</p>
+        <h2>Deciding for<br /><span id="roomHeadingName">----</span></h2>
+        <div class="players" id="players" aria-live="polite"></div>
+        <button class="judge-button" id="judgeButton" type="button" disabled>Call the Judge</button>
+        <div class="result" id="result" aria-live="assertive"></div>
+      </section>
+    </main>
+
+    <!-- Reused between choices so each step feels like a deliberate transition. -->
+    <div class="transition-overlay" id="transitionOverlay" aria-hidden="true"></div>
+
+    <section class="verdict-overlay" id="verdictOverlay" aria-live="assertive" aria-hidden="true">
+      <div class="verdict-color-field" id="verdictColorField" aria-hidden="true"></div>
+      <div class="verdict-content"><p class="eyebrow">Final Ruling</p><h2 id="verdictWinner"></h2><p id="verdictSubtext"></p></div>
+    </section>
+
+    <script src="/client.js" defer></script>
+  </body>
+</html>

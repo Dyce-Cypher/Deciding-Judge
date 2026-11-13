@@ -212,7 +212,7 @@ websocketServer.on('connection', (socket) => {
         collections: new Map([...player.room.players.keys()].map((id) => [id, []])),
         totals: new Map([...player.room.players.keys()].map((id) => [id, 0])),
       };
-      return broadcast(player.room, { type: 'cardsStart', cards, currentPlayerId: hostId(player.room), collections: publicCardCollections(player.room, player.room.cardSession) });
+      return broadcast(player.room, { type: 'cardsStart', cards, currentPlayerId: hostId(player.room), currentPlayerColor: player.color, collections: publicCardCollections(player.room, player.room.cardSession) });
     }
 
     if (message.type === 'cardPick' && player.room?.cardSession) {
@@ -234,7 +234,7 @@ websocketServer.on('connection', (socket) => {
       }
       const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
       session.currentPlayerId = otherPlayer.id;
-      return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, collections });
+      return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color, collections });
     }
   });
 

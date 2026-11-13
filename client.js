@@ -87,21 +87,20 @@ function renderCardGame(message) {
   renderCardCollections(message.collections || []);
   cardDeck.innerHTML = '';
   (message.cards || []).forEach((card) => {
-    if (picked.has(card.id)) return;
     const cardButton = document.createElement('button');
-    cardButton.className = 'card-pick';
+    cardButton.className = `card-pick${picked.has(card.id) ? ' is-picked' : ''}`;
     cardButton.type = 'button';
-    cardButton.textContent = '\u{1F0A0}';
-    cardButton.disabled = message.currentPlayerId !== socketState.player;
-    cardButton.setAttribute('aria-label', 'Pick a face-down card');
-    cardButton.addEventListener('click', () => {
+    cardButton.textContent = picked.has(card.id) ? '' : '\u{1F0A0}';
+    cardButton.disabled = picked.has(card.id) || message.currentPlayerId !== socketState.player;
+    cardButton.setAttribute('aria-label', picked.has(card.id) ? 'Card already drawn' : 'Pick a face-down card');
+    if (!picked.has(card.id)) cardButton.addEventListener('click', () => {
       cardDeck.querySelectorAll('button').forEach((button) => { button.disabled = true; });
       send('cardPick', { cardId: card.id });
     });
     cardDeck.appendChild(cardButton);
   });
+  cardsOverlay.className = `cards-overlay cards-overlay--${message.currentPlayerColor || 'white'} is-visible`;
   cardsOverlay.setAttribute('aria-hidden', 'false');
-  cardsOverlay.classList.add('is-visible');
 }
 
 function clearRoomSelection() {

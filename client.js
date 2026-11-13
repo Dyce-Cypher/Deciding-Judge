@@ -76,6 +76,7 @@ function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" 
 const gestureAssets = { rock: '/Element/Rock.png', paper: '/Element/Paper.png', scissors: '/Element/Scissors.png' };
 const cardSuitBases = { spades: 0x1f0a1, hearts: 0x1f0b1, diamonds: 0x1f0c1, clubs: 0x1f0d1 };
 const cardRanks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const sameColorShifts = { red: '#a84d6b', blue: '#7770bd', yellow: '#b9aa62', green: '#4f9b87' };
 
 function gestureMarkup(gesture) { return `<img src="${gestureAssets[gesture]}" alt="${gesture}" />`; }
 function cardSymbol(card) {
@@ -247,11 +248,19 @@ function renderRoom(room) {
   playersElement.appendChild(duelElement);
   const ready = room.players.length === 2;
   if (ready) {
-    const roomColors = room.players.map((player) => player.color);
-    roomCombinedGlow.style.background = `linear-gradient(135deg, var(--${roomColors[0]}), var(--${roomColors[1]}))`;
+    const currentPlayer = room.players.find((player) => player.id === socketState.player) || room.players[0];
+    const otherPlayer = room.players.find((player) => player.id !== currentPlayer.id) || room.players[1];
+    if (currentPlayer.color === otherPlayer.color) {
+      roomCombinedGlow.style.background = `linear-gradient(135deg, ${sameColorShifts[currentPlayer.color]}, var(--${currentPlayer.color}) 68%, var(--${currentPlayer.color}))`;
+      roomCombinedGlow.classList.add('is-same-color');
+    } else {
+      roomCombinedGlow.style.background = `linear-gradient(135deg, var(--${currentPlayer.color}), var(--${otherPlayer.color}))`;
+      roomCombinedGlow.classList.remove('is-same-color');
+    }
     roomCombinedGlow.classList.add('is-visible');
   } else {
     roomCombinedGlow.classList.remove('is-visible');
+    roomCombinedGlow.classList.remove('is-same-color');
   }
   const isHost = socketState.player === socketState.hostId;
   judgeButton.disabled = !ready || !isHost;

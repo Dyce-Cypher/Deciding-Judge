@@ -97,9 +97,6 @@ websocketServer.on('connection', (socket) => {
       if (!roomName) return send(socket, { type: 'error', message: 'Enter a room name.' });
       const room = rooms.get(roomName.toLowerCase()) || makeRoom(roomName);
       if (room.players.size >= 2) return send(socket, { type: 'error', message: 'That room already has two players.' });
-      if ([...room.players.values()].some((existingPlayer) => existingPlayer.color === color && existingPlayer.shape === shape)) {
-        return send(socket, { type: 'error', message: 'That shape and color are already in use in this room.' });
-      }
       rooms.set(roomName.toLowerCase(), room);
       if (!room.hostId) room.hostId = player.id;
       player.room = room;

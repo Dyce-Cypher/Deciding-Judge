@@ -11,7 +11,7 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null }; }
+function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null, cardSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
 
@@ -29,6 +29,16 @@ function publicRoomDirectory() {
 
 function publicStrawTallies(room, session) {
   return [...room.players.values()].map((roomPlayer) => ({ id: roomPlayer.id, color: roomPlayer.color, shape: roomPlayer.shape, count: session.tallies.get(roomPlayer.id) || 0 }));
+}
+
+function publicCardCollections(room, session) {
+  return [...room.players.values()].map((roomPlayer) => ({
+    id: roomPlayer.id,
+    color: roomPlayer.color,
+    shape: roomPlayer.shape,
+    cards: session.collections.get(roomPlayer.id) || [],
+    total: session.totals.get(roomPlayer.id) || 0,
+  }));
 }
 
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
@@ -178,12 +188,61 @@ websocketServer.on('connection', (socket) => {
       player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'gesture' } : null;
       return broadcast(player.room, gestureResult);
     }
+
+    if (message.type === 'cardsStart' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
+      if (player.room.cardSession) return;
+      const suits = [
+        { name: 'spades', offset: 0 },
+        { name: 'hearts', offset: 0x10 },
+        { name: 'diamonds', offset: 0x20 },
+        { name: 'clubs', offset: 0x30 },
+      ];
+      const cards = suits.flatMap((suit) => Array.from({ length: 13 }, (_, index) => {
+        const rank = index + 1;
+        return { id: `${suit.name}-${rank}`, suit: suit.name, rank, value: rank === 1 ? 1 : Math.min(rank, 10) };
+      }));
+      for (let index = cards.length - 1; index > 0; index -= 1) {
+        const swapIndex = crypto.randomInt(index + 1);
+        [cards[index], cards[swapIndex]] = [cards[swapIndex], cards[index]];
+      }
+      player.room.cardSession = {
+        cards,
+        currentPlayerId: hostId(player.room),
+        picked: [],
+        collections: new Map([...player.room.players.keys()].map((id) => [id, []])),
+        totals: new Map([...player.room.players.keys()].map((id) => [id, 0])),
+      };
+      return broadcast(player.room, { type: 'cardsStart', cards, currentPlayerId: hostId(player.room), collections: publicCardCollections(player.room, player.room.cardSession) });
+    }
+
+    if (message.type === 'cardPick' && player.room?.cardSession) {
+      const session = player.room.cardSession;
+      const card = session.cards.find((candidate) => candidate.id === message.cardId);
+      if (session.currentPlayerId !== player.id || !card || session.picked.includes(card.id)) return;
+      session.picked.push(card.id);
+      session.collections.get(player.id).push(card);
+      session.totals.set(player.id, (session.totals.get(player.id) || 0) + card.value);
+      const collections = publicCardCollections(player.room, session);
+      if (session.picked.length === session.cards.length) {
+        const players = [...player.room.players.values()];
+        const firstTotal = session.totals.get(players[0].id) || 0;
+        const secondTotal = session.totals.get(players[1].id) || 0;
+        const winner = firstTotal === secondTotal ? null : (firstTotal > secondTotal ? players[0] : players[1]);
+        player.room.cardSession = null;
+        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'cards', collections } : null;
+        return broadcast(player.room, { type: 'cardResult', method: 'cards', collections, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null });
+      }
+      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+      session.currentPlayerId = otherPlayer.id;
+      return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, collections });
+    }
   });
 
   socket.on('close', () => {
     if (!player.room) return;
     player.room.strawSession = null;
     player.room.gestureSession = null;
+    player.room.cardSession = null;
     player.room.players.delete(player.id);
     if (player.room.hostId === player.id) player.room.hostId = [...player.room.players.keys()][0] || null;
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());

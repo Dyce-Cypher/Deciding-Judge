@@ -20,6 +20,7 @@ const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
 const gestureButton = document.querySelector('#gestureButton');
+const cardsButton = document.querySelector('#cardsButton');
 const resultElement = document.querySelector('#result');
 const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
@@ -35,6 +36,10 @@ const gestureOverlay = document.querySelector('#gestureOverlay');
 const gestureInstruction = document.querySelector('#gestureInstruction');
 const gestureChoices = document.querySelector('#gestureChoices');
 const gestureReveal = document.querySelector('#gestureReveal');
+const cardsOverlay = document.querySelector('#cardsOverlay');
+const cardsInstruction = document.querySelector('#cardsInstruction');
+const cardCollections = document.querySelector('#cardCollections');
+const cardDeck = document.querySelector('#cardDeck');
 const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
@@ -60,8 +65,46 @@ function colorClass(color) { return `player-swatch player-swatch--${color}`; }
 function shapeGlyph(shape) { return shapeGlyphs[shape] || '•'; }
 function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" src="${kingIconPath}" alt="King" />` : shapeGlyph(shape); }
 const gestureAssets = { rock: '/Element/Rock.png', paper: '/Element/Paper.png', scissors: '/Element/Scissors.png' };
+const cardSuitBases = { spades: 0x1f0a1, hearts: 0x1f0b1, diamonds: 0x1f0c1, clubs: 0x1f0d1 };
+const cardRanks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 
 function gestureMarkup(gesture) { return `<img src="${gestureAssets[gesture]}" alt="${gesture}" />`; }
+function cardSymbol(card) {
+  const rankOffset = card.rank === 1 ? 0 : card.rank <= 10 ? card.rank - 1 : card.rank === 11 ? 10 : card.rank === 12 ? 12 : 13;
+  return String.fromCodePoint(cardSuitBases[card.suit] + rankOffset);
+}
+
+function renderCardCollections(collections) {
+  cardCollections.innerHTML = (collections || []).map((collection) => `
+    <div class="card-collection">
+      <p>${collection.id === socketState.player ? 'Your cards' : 'Other player'}</p>
+      <div class="collected-cards">${collection.cards.map((card) => `<span class="collected-card" title="${cardRanks[card.rank - 1]} of ${card.suit}">${cardSymbol(card)}</span>`).join('')}</div>
+      <strong>${collection.total} points</strong>
+    </div>`).join('');
+}
+
+function renderCardGame(message) {
+  const picked = new Set(message.picked || []);
+  cardsInstruction.textContent = message.currentPlayerId === socketState.player ? 'Your turn. Pick one card.' : 'Waiting for the other player.';
+  renderCardCollections(message.collections || []);
+  cardDeck.innerHTML = '';
+  (message.cards || []).forEach((card) => {
+    if (picked.has(card.id)) return;
+    const cardButton = document.createElement('button');
+    cardButton.className = 'card-pick';
+    cardButton.type = 'button';
+    cardButton.textContent = '\u{1F0A0}';
+    cardButton.disabled = message.currentPlayerId !== socketState.player;
+    cardButton.setAttribute('aria-label', 'Pick a face-down card');
+    cardButton.addEventListener('click', () => {
+      cardDeck.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+      send('cardPick', { cardId: card.id });
+    });
+    cardDeck.appendChild(cardButton);
+  });
+  cardsOverlay.setAttribute('aria-hidden', 'false');
+  cardsOverlay.classList.add('is-visible');
+}
 
 function clearRoomSelection() {
   roomList.classList.add('is-hidden');
@@ -157,7 +200,8 @@ function renderRoom(room) {
   judgeButton.disabled = !ready || !isHost;
   strawButton.disabled = !ready || !isHost;
   gestureButton.disabled = !ready || !isHost;
-  [judgeButton, strawButton, gestureButton].forEach((button) => {
+  cardsButton.disabled = !ready || !isHost;
+  [judgeButton, strawButton, gestureButton, cardsButton].forEach((button) => {
     button.title = isHost ? '' : 'Only the host can choose the game.';
   });
 }
@@ -207,10 +251,13 @@ function showGestureResult(message) {
 function showVerdict(color, shape, result) {
   verdictColorField.className = `verdict-color-field verdict-color-field--${color}`;
   verdictWinner.className = `verdict-winner--${color}`;
-  verdictWinner.innerHTML = shapeMarkup(shape);
+  verdictWinner.innerHTML = shape ? shapeMarkup(shape) : 'Draw';
   verdictWinner.setAttribute('aria-label', `${shape} wins`);
   const isStrawLoss = result?.method === 'straws' && result.loser?.id === socketState.player;
-  verdictSubtext.textContent = result?.method === 'straws'
+  const winnerTotal = result?.collections?.find((collection) => collection.id === result.winner?.id)?.total;
+  verdictSubtext.textContent = result?.method === 'cards'
+    ? (result.winner ? `Ruling in favor of the ${shape}. ${winnerTotal} points. Meeting adjourned` : 'The cards are tied. Meeting adjourned')
+    : result?.method === 'straws'
     ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'Opponent came short. Meeting adjourned')
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
   verdictOverlay.setAttribute('aria-hidden', 'false');
@@ -275,6 +322,13 @@ function connectSocket() {
       gestureInstruction.textContent = 'Waiting for the other player.';
     }
     if (message.type === 'gestureResult') showGestureResult(message);
+    if (message.type === 'cardsStart' || message.type === 'cardUpdate') renderCardGame(message);
+    if (message.type === 'cardResult') {
+      renderCardCollections(message.collections);
+      cardsOverlay.classList.remove('is-visible');
+      cardsOverlay.setAttribute('aria-hidden', 'true');
+      showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'cards' });
+    }
     if (message.type === 'gameDenied') resultElement.textContent = message.message;
     if (message.type === 'result') {
       strawOverlay.classList.remove('is-visible');
@@ -372,6 +426,7 @@ roomForm.addEventListener('submit', (event) => {
 judgeButton.addEventListener('click', () => send('judge'));
 strawButton.addEventListener('click', () => send('straws'));
 gestureButton.addEventListener('click', () => send('gestureStart'));
+cardsButton.addEventListener('click', () => send('cardsStart'));
 document.querySelector('#leaveButton').addEventListener('click', () => {
   socketState.socket?.close();
   fadeBetween(() => {

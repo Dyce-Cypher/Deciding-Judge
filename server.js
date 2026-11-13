@@ -59,7 +59,7 @@ function publicDiceState(room, session, playerId) {
   const hand = session.hands.get(playerId);
   const opponent = [...room.players.keys()].find((id) => id !== playerId);
   const currentPlayer = room.players.get(session.currentPlayerId);
-  return { type: 'diceUpdate', dice: hand.dice, rolls: hand.rolls, called: hand.called, currentPlayerId: session.currentPlayerId, currentPlayerColor: currentPlayer?.color || 'white', opponentCalled: session.hands.get(opponent)?.called || false, opponentRolls: session.hands.get(opponent)?.rolls || 0 };
+  return { type: 'diceUpdate', dice: hand.dice, rolls: hand.rolls, called: hand.called, currentPlayerId: playerId, currentPlayerColor: room.players.get(playerId)?.color || currentPlayer?.color || 'white', opponentCalled: session.hands.get(opponent)?.called || false, opponentRolls: session.hands.get(opponent)?.rolls || 0 };
 }
 function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
 
@@ -266,14 +266,14 @@ websocketServer.on('connection', (socket) => {
         currentPlayerId: hostId(player.room),
         hands: new Map(players.map((roomPlayer) => [roomPlayer.id, { dice: rollDice(), rolls: 0, called: false }])),
       };
-      player.room.players.forEach((roomPlayer) => send(roomPlayer.socket, { type: 'diceStart', dice: player.room.diceSession.hands.get(roomPlayer.id).dice, rolls: 0, currentPlayerId: hostId(player.room) }));
+      player.room.players.forEach((roomPlayer) => send(roomPlayer.socket, { ...publicDiceState(player.room, player.room.diceSession, roomPlayer.id), type: 'diceStart' }));
       return;
     }
 
     if (message.type === 'diceRoll' && player.room?.diceSession) {
       const session = player.room.diceSession;
       const hand = session.hands.get(player.id);
-      if (session.currentPlayerId !== player.id || hand.called || hand.rolls >= 3) return;
+      if (hand.called || hand.rolls >= 3) return;
       const selected = Array.isArray(message.indices) ? [...new Set(message.indices.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < 5))] : [];
       if (selected.length > 5) return;
       selected.forEach((index) => { hand.dice[index] = crypto.randomInt(1, 7); });
@@ -290,7 +290,6 @@ websocketServer.on('connection', (socket) => {
         player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
         return broadcast(player.room, diceResult);
       }
-      session.currentPlayerId = otherPlayer.id;
       sendDiceStates(player.room, session);
       return;
     }
@@ -298,7 +297,7 @@ websocketServer.on('connection', (socket) => {
     if (message.type === 'diceCall' && player.room?.diceSession) {
       const session = player.room.diceSession;
       const hand = session.hands.get(player.id);
-      if (session.currentPlayerId !== player.id || hand.called) return;
+      if (hand.called) return;
       hand.called = true;
       const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
       if (!otherPlayer || session.hands.get(otherPlayer.id).called) {
@@ -311,7 +310,6 @@ websocketServer.on('connection', (socket) => {
         player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
         return broadcast(player.room, diceResult);
       }
-      session.currentPlayerId = otherPlayer.id;
       return sendDiceStates(player.room, session);
     }
   });

@@ -275,6 +275,7 @@ function connectSocket() {
       gestureInstruction.textContent = 'Waiting for the other player.';
     }
     if (message.type === 'gestureResult') showGestureResult(message);
+    if (message.type === 'gameDenied') resultElement.textContent = message.message;
     if (message.type === 'result') {
       strawOverlay.classList.remove('is-visible');
       strawOverlay.setAttribute('aria-hidden', 'true');

@@ -11,13 +11,13 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, players: new Map(), result: null, strawSession: null, gestureSession: null }; }
+function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, strawSession: null, gestureSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 function hostId(room) { return [...room.players.keys()][0] || null; }
 
 function publicRoom(room) {
   const players = [...room.players.values()];
-  return { name: room.name, hostId: hostId(room), players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
+  return { name: room.name, hostId: room.hostId || hostId(room), players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
 }
 
 // The lobby only receives the information needed to show room availability.
@@ -69,6 +69,7 @@ websocketServer.on('connection', (socket) => {
         return send(socket, { type: 'error', message: 'That shape and color are already in use in this room.' });
       }
       rooms.set(roomName.toLowerCase(), room);
+      if (!room.hostId) room.hostId = player.id;
       player.room = room;
       player.color = color;
       player.shape = shape;
@@ -77,6 +78,10 @@ websocketServer.on('connection', (socket) => {
       send(socket, { type: 'joined', playerId: player.id, room: publicRoom(room) });
       broadcastRoom(room);
       return broadcastRoomDirectory();
+    }
+
+    if (['judge', 'straws', 'gestureStart'].includes(message.type) && player.room && player.room.players.size === 2 && player.id !== hostId(player.room)) {
+      return send(socket, { type: 'gameDenied', message: 'Only the host can choose the game.' });
     }
 
     if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === hostId(player.room)) {
@@ -180,6 +185,7 @@ websocketServer.on('connection', (socket) => {
     player.room.strawSession = null;
     player.room.gestureSession = null;
     player.room.players.delete(player.id);
+    if (player.room.hostId === player.id) player.room.hostId = [...player.room.players.keys()][0] || null;
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());
     else broadcastRoom(player.room);
     broadcastRoomDirectory();

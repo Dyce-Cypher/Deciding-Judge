@@ -11,7 +11,7 @@ const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/java
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, players: new Map(), result: null }; }
+function makeRoom(name) { return { name, players: new Map(), result: null, strawSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
 
 function publicRoom(room) {
@@ -79,10 +79,47 @@ websocketServer.on('connection', (socket) => {
       player.room.result = { winnerId: winner.id, color: winner.color };
       return broadcast(player.room, { type: 'result', winner: { id: winner.id, color: winner.color, shape: winner.shape } });
     }
+
+    if (message.type === 'straws' && player.room && player.room.players.size === 2) {
+      if (player.room.strawSession) return;
+      const argumentLength = [...player.room.players.values()].reduce((total, roomPlayer) => total + roomPlayer.argument.length, 0);
+      const strawCount = Math.max(3, Math.min(18, argumentLength));
+      const shortIndex = crypto.randomInt(strawCount);
+      const straws = Array.from({ length: strawCount }, (_, index) => ({
+        id: `straw-${index}`,
+        height: index === shortIndex ? 84 : crypto.randomInt(210, 231),
+        angle: crypto.randomInt(-4, 5),
+      }));
+      player.room.strawSession = { shortStrawId: `straw-${shortIndex}`, currentPlayerId: player.id, drawn: [], straws };
+      return broadcast(player.room, { type: 'strawStart', straws, currentPlayerId: player.id, currentPlayerColor: player.color, drawn: [] });
+    }
+
+    if (message.type === 'drawStraw' && player.room?.strawSession) {
+      const session = player.room.strawSession;
+      if (session.currentPlayerId !== player.id || !session.straws.some((straw) => straw.id === message.strawId) || session.drawn.some((draw) => draw.strawId === message.strawId)) return;
+      session.drawn.push({ playerId: player.id, strawId: message.strawId });
+      if (session.drawn.length < session.straws.length) {
+        const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+        session.currentPlayerId = otherPlayer.id;
+        return broadcast(player.room, { type: 'strawUpdate', straws: session.straws, drawn: session.drawn, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color });
+      }
+      const loserDraw = session.drawn.find((draw) => draw.strawId === session.shortStrawId) || session.drawn[0];
+      const loser = player.room.players.get(loserDraw.playerId);
+      const winner = [...player.room.players.values()].find((candidate) => candidate.id !== loser.id);
+      player.room.strawSession = null;
+      player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws' };
+      return broadcast(player.room, {
+        type: 'result',
+        method: 'straws',
+        winner: { id: winner.id, color: winner.color, shape: winner.shape },
+        loser: { id: loser.id, color: loser.color, shape: loser.shape },
+      });
+    }
   });
 
   socket.on('close', () => {
     if (!player.room) return;
+    player.room.strawSession = null;
     player.room.players.delete(player.id);
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());
     else broadcastRoom(player.room);

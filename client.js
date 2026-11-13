@@ -17,6 +17,7 @@ const loginView = document.querySelector('#loginView');
 const roomView = document.querySelector('#roomView');
 const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
+const strawButton = document.querySelector('#strawButton');
 const resultElement = document.querySelector('#result');
 const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
@@ -24,6 +25,9 @@ const verdictWinner = document.querySelector('#verdictWinner');
 const verdictSubtext = document.querySelector('#verdictSubtext');
 const transitionOverlay = document.querySelector('#transitionOverlay');
 const selectedColorGlow = document.querySelector('#selectedColorGlow');
+const strawOverlay = document.querySelector('#strawOverlay');
+const strawInstruction = document.querySelector('#strawInstruction');
+const strawChoices = document.querySelector('#strawChoices');
 const socketState = { socket: null, player: null, shape: null, color: null };
 let selectedRoomName = '';
 const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
@@ -105,16 +109,47 @@ function renderRoom(room) {
   playersElement.appendChild(duelElement);
   const ready = room.players.length === 2;
   judgeButton.disabled = !ready;
+  strawButton.disabled = !ready;
 }
 
-function showVerdict(color, shape) {
+function showVerdict(color, shape, result) {
   verdictColorField.className = `verdict-color-field verdict-color-field--${color}`;
   verdictWinner.className = `verdict-winner--${color}`;
   verdictWinner.innerHTML = shapeMarkup(shape);
   verdictWinner.setAttribute('aria-label', `${shape} wins`);
-  verdictSubtext.textContent = `Ruling in favor of the ${shape}. Meeting adjourned`;
+  const isStrawLoss = result?.method === 'straws' && result.loser?.id === socketState.player;
+  verdictSubtext.textContent = result?.method === 'straws'
+    ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'You drew the long straw. Meeting adjourned')
+    : `Ruling in favor of the ${shape}. Meeting adjourned`;
   verdictOverlay.setAttribute('aria-hidden', 'false');
   verdictOverlay.classList.add('is-visible');
+}
+
+function renderStrawDraw(message) {
+  strawOverlay.setAttribute('aria-hidden', 'false');
+  strawOverlay.className = `straw-overlay straw-overlay--${message.currentPlayerColor} is-visible`;
+  strawChoices.innerHTML = '';
+  const drawnIds = new Set(message.drawn.map((draw) => draw.strawId));
+  const myTurn = message.currentPlayerId === socketState.player;
+  strawInstruction.textContent = myTurn ? 'Your turn. Choose one.' : 'Waiting for the other player to draw.';
+  (message.straws || []).forEach((strawData, index) => {
+    const drawn = drawnIds.has(strawData.id);
+    if (drawn) return;
+    const strawButton = document.createElement('button');
+    strawButton.className = `straw-choice${drawn ? ' is-drawn' : ''}`;
+    strawButton.type = 'button';
+    strawButton.style.setProperty('--straw-height', `${strawData.height}px`);
+    strawButton.style.setProperty('--straw-tilt', `${strawData.angle || 0}deg`);
+    strawButton.disabled = drawn || !myTurn;
+    strawButton.setAttribute('aria-label', drawn ? 'Straw already drawn' : 'Draw this straw');
+    strawButton.innerHTML = '<img src="/Element/match_stick.png" alt="" />';
+    if (!drawn && myTurn) strawButton.addEventListener('click', () => {
+      strawButton.disabled = true;
+      strawButton.classList.add('is-flying');
+      window.setTimeout(() => send('drawStraw', { strawId: strawData.id }), 620);
+    });
+    strawChoices.appendChild(strawButton);
+  });
 }
 
 function connectSocket() {
@@ -132,7 +167,13 @@ function connectSocket() {
       window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 420);
     }
     if (message.type === 'room') renderRoom(message.room);
-    if (message.type === 'result') showVerdict(message.winner.color, message.winner.shape);
+    if (message.type === 'strawStart') renderStrawDraw(message);
+    if (message.type === 'strawUpdate') renderStrawDraw(message);
+    if (message.type === 'result') {
+      strawOverlay.classList.remove('is-visible');
+      strawOverlay.setAttribute('aria-hidden', 'true');
+      showVerdict(message.winner.color, message.winner.shape, message);
+    }
     if (message.type === 'error') { formMessage.textContent = message.message; formMessage.className = 'form-message is-error'; transitionOverlay.classList.remove('is-active'); }
   });
   socket.addEventListener('error', () => { formMessage.textContent = 'Could not connect to the room server. Try again.'; formMessage.className = 'form-message is-error'; });
@@ -194,6 +235,7 @@ roomForm.addEventListener('submit', (event) => {
 });
 
 judgeButton.addEventListener('click', () => send('judge'));
+strawButton.addEventListener('click', () => send('straws'));
 document.querySelector('#leaveButton').addEventListener('click', () => {
   socketState.socket?.close();
   fadeBetween(() => {
@@ -209,6 +251,8 @@ document.querySelector('#leaveButton').addEventListener('click', () => {
     document.querySelectorAll('.room-entry').forEach((entry) => entry.classList.remove('is-selected'));
     formMessage.textContent = '';
     resultElement.textContent = '';
+    strawOverlay.classList.remove('is-visible');
+    strawOverlay.setAttribute('aria-hidden', 'true');
     verdictOverlay.classList.remove('is-visible');
     verdictOverlay.setAttribute('aria-hidden', 'true');
     stepInstruction.textContent = 'Prepare your arguments.';

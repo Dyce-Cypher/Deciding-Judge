@@ -57,12 +57,24 @@
         <h2>Deciding for<br /><span id="roomHeadingName">----</span></h2>
         <div class="players" id="players" aria-live="polite"></div>
         <button class="judge-button" id="judgeButton" type="button" disabled>Call the Judge</button>
+        <button class="straw-button" id="strawButton" type="button" disabled>Consult the Straws</button>
         <div class="result" id="result" aria-live="assertive"></div>
       </section>
     </main>
 
     <!-- Reused between choices so each step feels like a deliberate transition. -->
     <div class="transition-overlay" id="transitionOverlay" aria-hidden="true"></div>
+
+    <section class="straw-overlay" id="strawOverlay" aria-live="polite" aria-hidden="true">
+      <div class="straw-content">
+        <div class="straw-copy">
+          <p class="eyebrow">Consult the Straws</p>
+          <h2>Draw your<br /><span>straw.</span></h2>
+          <p id="strawInstruction">The first player chooses.</p>
+        </div>
+        <div class="straw-choices" id="strawChoices"></div>
+      </div>
+    </section>
 
     <section class="verdict-overlay" id="verdictOverlay" aria-live="assertive" aria-hidden="true">
       <div class="verdict-color-field" id="verdictColorField" aria-hidden="true"></div>

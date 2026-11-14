@@ -60,7 +60,7 @@ let renderedCardCount = 0;
 let selectedDice = new Set();
 let currentRoomState = null;
 let nextMeetingNumber = 1;
-const kingIconPath = '/Element/Royal%20Rat%20Insignia.png';
+const kingIconPath = './Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
 function fadeBetween(update, reveal = true) {
@@ -82,7 +82,7 @@ function send(type, data = {}) { if (socketState.socket?.readyState === WebSocke
 function colorClass(color) { return `player-swatch player-swatch--${color}`; }
 function shapeGlyph(shape) { return shapeGlyphs[shape] || '•'; }
 function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" src="${kingIconPath}" alt="King" />` : shapeGlyph(shape); }
-const gestureAssets = { rock: '/Element/Rock.png', paper: '/Element/Paper.png', scissors: '/Element/Scissors.png' };
+const gestureAssets = { rock: './Element/Rock.png', paper: './Element/Paper.png', scissors: './Element/Scissors.png' };
 const cardSuitBases = { spades: 0x1f0a1, hearts: 0x1f0b1, diamonds: 0x1f0c1, clubs: 0x1f0d1 };
 const cardRanks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const sameColorShifts = { red: '#a84d6b', blue: '#7770bd', yellow: '#b9aa62', green: '#4f9b87' };
@@ -390,7 +390,7 @@ function renderStrawDraw(message) {
     strawButton.style.setProperty('--straw-tilt', `${strawData.angle || 0}deg`);
     strawButton.disabled = drawn || !myTurn;
     strawButton.setAttribute('aria-label', drawn ? 'Straw already drawn' : 'Draw this straw');
-    strawButton.innerHTML = `<img src="${strawData.short ? '/Element/match_stick_short.png' : '/Element/match_stick.png'}" alt="" />`;
+    strawButton.innerHTML = `<img src="${strawData.short ? './Element/match_stick_short.png' : './Element/match_stick.png'}" alt="" />`;
     if (!drawn && myTurn) strawButton.addEventListener('click', () => {
       strawButton.disabled = true;
       strawButton.classList.add('is-flying');

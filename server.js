@@ -51,17 +51,40 @@ function updateRoomSeries(room, winnerId) {
   room.series.complete = room.series.wins[winnerId] >= 2;
   return { ...room.series, wins: { ...room.series.wins } };
 }
-function diceHandName(dice) {
-  const counts = Object.values(dice.reduce((groups, value) => { groups[value] = (groups[value] || 0) + 1; return groups; }, {})).sort((a, b) => b - a);
-  const unique = [...new Set(dice)].sort((a, b) => a - b).join('');
-  if (counts[0] === 5) return 'five of a kind';
-  if (counts[0] === 4) return 'four of a kind';
-  if (counts[0] === 3 && counts[1] === 2) return 'a full house';
-  if (unique === '12345' || unique === '23456') return 'a straight';
-  if (counts[0] === 3) return 'three of a kind';
-  if (counts[0] === 2 && counts[1] === 2) return 'two pair';
-  if (counts[0] === 2) return 'a pair';
-  return 'high dice';
+// Poker dice ranking, strongest to weakest (matching the chart in the UI).
+// The tie-break values are only consulted when both hands have the same type.
+function diceHand(dice) {
+  const values = [...dice].sort((a, b) => a - b);
+  const groups = Object.entries(values.reduce((counts, value) => {
+    counts[value] = (counts[value] || 0) + 1;
+    return counts;
+  }, {})).map(([value, count]) => ({ value: Number(value), count }))
+    .sort((a, b) => b.count - a.count || b.value - a.value);
+  const unique = [...new Set(values)];
+  const straightHigh = unique.length === 5 && (unique.join('') === '12345' || unique.join('') === '23456')
+    ? unique[unique.length - 1]
+    : null;
+
+  if (groups[0].count === 5) return { name: 'five of a kind', rank: 7, tieBreak: [groups[0].value] };
+  if (groups[0].count === 4) return { name: 'four of a kind', rank: 6, tieBreak: [groups[0].value, groups[1].value] };
+  if (groups[0].count === 3 && groups[1].count === 2) return { name: 'a full house', rank: 5, tieBreak: [groups[0].value, groups[1].value] };
+  if (straightHigh !== null) return { name: 'a straight', rank: 4, tieBreak: [straightHigh] };
+  if (groups[0].count === 3) return { name: 'three of a kind', rank: 3, tieBreak: [groups[0].value, ...groups.slice(1).map((group) => group.value).sort((a, b) => b - a)] };
+  if (groups[0].count === 2 && groups[1].count === 2) return { name: 'two pair', rank: 2, tieBreak: [groups[0].value, groups[1].value, groups[2].value] };
+  if (groups[0].count === 2) return { name: 'a pair', rank: 1, tieBreak: [groups[0].value, ...groups.slice(1).map((group) => group.value).sort((a, b) => b - a)] };
+  return { name: 'high dice', rank: 0, tieBreak: values.sort((a, b) => b - a) };
+}
+
+function diceHandName(dice) { return diceHand(dice).name; }
+
+function compareDiceHands(leftDice, rightDice) {
+  const left = diceHand(leftDice);
+  const right = diceHand(rightDice);
+  if (left.rank !== right.rank) return left.rank > right.rank ? 1 : -1;
+  for (let index = 0; index < Math.max(left.tieBreak.length, right.tieBreak.length); index += 1) {
+    if (left.tieBreak[index] !== right.tieBreak[index]) return left.tieBreak[index] > right.tieBreak[index] ? 1 : -1;
+  }
+  return 0;
 }
 function publicCollections(room, session) { return roomPlayers(room).map((player) => ({ id: player.id, cards: session.collections[player.id] || [], total: (session.collections[player.id] || []).reduce((sum, card) => sum + card.rank, 0) })); }
 
@@ -252,9 +275,8 @@ websocketServer.on('connection', (socket) => {
         return broadcast(player.room, { type: 'diceUpdate', dice: session.hands[nextPlayer.id], currentPlayerId: nextPlayer.id, currentPlayerColor: nextPlayer.color, rerollsRemaining: session.rerolls[nextPlayer.id], rerolledIndices: [], calledDice: session.hands[player.id], calledPlayerId: player.id });
       }
       const opponent = players.find((candidate) => candidate.id !== player.id);
-      const score = (session.hands[player.id] || []).reduce((sum, value) => sum + value, 0);
-      const opponentScore = (session.hands[opponent.id] || []).reduce((sum, value) => sum + value, 0);
-      const winner = score === opponentScore ? null : (score > opponentScore ? player : opponent);
+      const comparison = compareDiceHands(session.hands[player.id] || [], session.hands[opponent.id] || []);
+      const winner = comparison === 0 ? null : (comparison > 0 ? player : opponent);
       const loser = winner ? (winner.id === player.id ? opponent : player) : null;
       const roomSeries = updateRoomSeries(player.room, winner?.id);
       player.room.diceSession = null;

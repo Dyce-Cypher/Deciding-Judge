@@ -35,6 +35,13 @@ function broadcastRoom(room) { broadcast(room, { type: 'room', room: publicRoom(
 function broadcastRoomDirectory() { websocketServer.clients.forEach((socket) => send(socket, { type: 'roomList', rooms: publicRoomDirectory() })); }
 function roomPlayers(room) { return [...room.players.values()]; }
 function playerSummary(player) { return { id: player.id, color: player.color, shape: player.shape }; }
+function shuffleCards(cards) {
+  for (let index = cards.length - 1; index > 0; index -= 1) {
+    const swapIndex = crypto.randomInt(index + 1);
+    [cards[index], cards[swapIndex]] = [cards[swapIndex], cards[index]];
+  }
+  return cards;
+}
 function updateRoomSeries(room, winnerId) {
   if (!winnerId) return room.series;
   room.lastWinnerId = winnerId;
@@ -191,6 +198,7 @@ websocketServer.on('connection', (socket) => {
     if (message.type === 'cardsStart' && player.room && player.room.players.size === 2) {
       const cards = [];
       for (const suit of ['spades', 'hearts', 'diamonds', 'clubs']) for (let rank = 1; rank <= 13; rank += 1) cards.push({ id: `${suit}-${rank}`, suit, rank });
+      shuffleCards(cards);
       player.room.cardSession = { cards, picked: [], currentPlayerId: player.id, collections: Object.fromEntries(roomPlayers(player.room).map((roomPlayer) => [roomPlayer.id, []])) };
       const session = player.room.cardSession;
       return broadcast(player.room, { type: 'cardsStart', cards: session.cards, picked: [], collections: publicCollections(player.room, session), currentPlayerId: session.currentPlayerId, currentPlayerColor: player.color });

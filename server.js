@@ -7,18 +7,15 @@ const WebSocket = require('ws');
 const PORT = process.env.PORT || 10000;
 const PUBLIC_DIRECTORY = __dirname;
 const rooms = new Map();
-const MIME_TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png' };
+const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png' };
 
 // A room is kept in memory because this project only needs to demonstrate
 // two connected browsers sharing state. A database is not needed yet.
-function makeRoom(name) { return { name, hostId: null, players: new Map(), result: null, series: { wins: new Map(), losses: new Map(), target: null, meetings: 0 }, strawSession: null, gestureSession: null, cardSession: null, diceSession: null }; }
+function makeRoom(name) { return { name, players: new Map(), result: null, lastWinnerId: null, series: null, gestureSeries: null, directionSession: null, strawSession: null, pendingRematch: null, gestureSession: null, cardSession: null, diceSession: null }; }
 function cleanRoomName(name) { return String(name).trim().replace(/[^a-z0-9 _-]/gi, '').slice(0, 24) || null; }
-function hostId(room) { return [...room.players.keys()][0] || null; }
-function gameChooserId(room) { return room.series?.target && room.series.chooserId ? room.series.chooserId : hostId(room); }
 
 function publicRoom(room) {
-  const players = [...room.players.values()];
-  return { name: room.name, hostId: room.hostId || hostId(room), series: { target: room.series.target, meetings: room.series.meetings, chooserId: room.series.chooserId || null }, players: players.map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result };
+  return { name: room.name, players: [...room.players.values()].map(({ id, color, shape, argument }) => ({ id, color, shape, argument })), result: room.result, series: room.series || null };
 }
 
 // The lobby only receives the information needed to show room availability.
@@ -32,51 +29,34 @@ function publicStrawTallies(room, session) {
   return [...room.players.values()].map((roomPlayer) => ({ id: roomPlayer.id, color: roomPlayer.color, shape: roomPlayer.shape, count: session.tallies.get(roomPlayer.id) || 0 }));
 }
 
-function publicCardCollections(room, session) {
-  return [...room.players.values()].map((roomPlayer) => ({
-    id: roomPlayer.id,
-    color: roomPlayer.color,
-    shape: roomPlayer.shape,
-    cards: session.collections.get(roomPlayer.id) || [],
-    total: session.totals.get(roomPlayer.id) || 0,
-  }));
-}
-
-function rollDice() { return Array.from({ length: 5 }, () => crypto.randomInt(1, 7)); }
-function evaluateDiceHand(dice) {
-  const counts = new Map();
-  dice.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
-  const groups = [...counts.entries()].sort((left, right) => right[1] - left[1] || right[0] - left[0]);
-  const pattern = groups.map((group) => group[1]).join('-');
-  const category = pattern === '5' ? 6 : pattern === '4-1' ? 5 : pattern === '3-2' ? 4 : pattern === '3-1-1' ? 3 : pattern === '2-2-1' ? 2 : pattern === '2-1-1-1' ? 1 : 0;
-  return { category, tiebreak: groups.flatMap(([value, count]) => Array(count).fill(value)) };
-}
-function compareDiceHands(left, right) {
-  if (left.category !== right.category) return left.category - right.category;
-  for (let index = 0; index < left.tiebreak.length; index += 1) if (left.tiebreak[index] !== right.tiebreak[index]) return left.tiebreak[index] - right.tiebreak[index];
-  return 0;
-}
-function publicDiceState(room, session, playerId) {
-  const hand = session.hands.get(playerId);
-  const opponent = [...room.players.keys()].find((id) => id !== playerId);
-  const currentPlayer = room.players.get(session.currentPlayerId);
-  return { type: 'diceUpdate', dice: hand.dice, rolls: hand.rolls, called: hand.called, currentPlayerId: playerId, currentPlayerColor: room.players.get(playerId)?.color || currentPlayer?.color || 'white', opponentCalled: session.hands.get(opponent)?.called || false, opponentRolls: session.hands.get(opponent)?.rolls || 0 };
-}
-function sendDiceStates(room, session) { room.players.forEach((roomPlayer) => send(roomPlayer.socket, publicDiceState(room, session, roomPlayer.id))); }
-function recordSeriesResult(room, winnerId, loserId, method) {
-  room.series.meetings += 1;
-  if (room.series.target) room.series.chooserId = loserId;
-  room.series.wins.set(winnerId, (room.series.wins.get(winnerId) || 0) + 1);
-  room.series.losses.set(loserId, (room.series.losses.get(loserId) || 0) + 1);
-  room.lastResult = { winnerId, loserId, method };
-  const scores = [...room.players.keys()].map((id) => ({ id, wins: room.series.wins.get(id) || 0, losses: room.series.losses.get(id) || 0 }));
-  return { method, winnerId, loserId, target: room.series.target, complete: Boolean(room.series.target && scores.some((score) => score.wins >= room.series.target)), scores };
-}
-
 function send(socket, message) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function broadcast(room, message) { room.players.forEach((player) => send(player.socket, message)); }
 function broadcastRoom(room) { broadcast(room, { type: 'room', room: publicRoom(room) }); }
 function broadcastRoomDirectory() { websocketServer.clients.forEach((socket) => send(socket, { type: 'roomList', rooms: publicRoomDirectory() })); }
+function roomPlayers(room) { return [...room.players.values()]; }
+function playerSummary(player) { return { id: player.id, color: player.color, shape: player.shape }; }
+function updateRoomSeries(room, winnerId) {
+  if (!winnerId) return room.series;
+  room.lastWinnerId = winnerId;
+  if (!room.series) return null;
+  room.series.wins[winnerId] = (room.series.wins[winnerId] || 0) + 1;
+  room.series.lastWinnerId = winnerId;
+  room.series.complete = room.series.wins[winnerId] >= 2;
+  return { ...room.series, wins: { ...room.series.wins } };
+}
+function diceHandName(dice) {
+  const counts = Object.values(dice.reduce((groups, value) => { groups[value] = (groups[value] || 0) + 1; return groups; }, {})).sort((a, b) => b - a);
+  const unique = [...new Set(dice)].sort((a, b) => a - b).join('');
+  if (counts[0] === 5) return 'five of a kind';
+  if (counts[0] === 4) return 'four of a kind';
+  if (counts[0] === 3 && counts[1] === 2) return 'a full house';
+  if (unique === '12345' || unique === '23456') return 'a straight';
+  if (counts[0] === 3) return 'three of a kind';
+  if (counts[0] === 2 && counts[1] === 2) return 'two pair';
+  if (counts[0] === 2) return 'a pair';
+  return 'high dice';
+}
+function publicCollections(room, session) { return roomPlayers(room).map((player) => ({ id: player.id, cards: session.collections[player.id] || [], total: (session.collections[player.id] || []).reduce((sum, card) => sum + card.rank, 0) })); }
 
 // Render serves the same files and WebSocket server from one Web Service.
 const server = http.createServer((request, response) => {
@@ -108,7 +88,6 @@ websocketServer.on('connection', (socket) => {
       const room = rooms.get(roomName.toLowerCase()) || makeRoom(roomName);
       if (room.players.size >= 2) return send(socket, { type: 'error', message: 'That room already has two players.' });
       rooms.set(roomName.toLowerCase(), room);
-      if (!room.hostId) room.hostId = player.id;
       player.room = room;
       player.color = color;
       player.shape = shape;
@@ -119,27 +98,193 @@ websocketServer.on('connection', (socket) => {
       return broadcastRoomDirectory();
     }
 
-    if (['judge', 'straws', 'gestureStart', 'cardsStart', 'diceStart'].includes(message.type) && player.room && player.room.players.size === 2 && player.id !== gameChooserId(player.room)) {
-      return send(socket, { type: 'gameDenied', message: player.room.series?.target ? 'Only the current series chooser can choose the game.' : 'Only the host can choose the game.' });
+    if (message.type === 'rematchRequest' && player.room) {
+      const opponent = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
+      if (!opponent) return;
+      const bestOf = Number(message.bestOf) === 5 ? 5 : 3;
+      player.room.pendingRematch = { requesterId: player.id, bestOf, mode: message.mode || 'judge' };
+      return send(opponent.socket, { type: 'rematchOffer', bestOf });
     }
 
-    if (message.type === 'judge' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
+    if (message.type === 'rematchResponse' && player.room?.pendingRematch) {
+      const pending = player.room.pendingRematch;
+      if (pending.requesterId === player.id) return;
+      const requester = player.room.players.get(pending.requesterId);
+      player.room.pendingRematch = null;
+      if (!requester) return;
+      if (!message.accepted) return broadcast(player.room, { type: 'rematchDeclined' });
+      const startingWins = Object.fromEntries(roomPlayers(player.room).map((roomPlayer) => [roomPlayer.id, roomPlayer.id === player.room.lastWinnerId ? 1 : 0]));
+      player.room.series = { target: pending.bestOf, mode: pending.mode, wins: startingWins, chooserId: pending.requesterId, lastWinnerId: player.room.lastWinnerId, meetingNumber: 2, complete: false };
+      player.room.gestureSeries = null;
+      return broadcast(player.room, { type: 'rematchReady', bestOf: pending.bestOf, meetingNumber: 2, chooserId: pending.requesterId, series: player.room.series });
+    }
+
+    if (message.type === 'seriesContinue' && player.room?.series && player.room.series.lastWinnerId === player.id && !player.room.series.complete) {
+      player.room.series.meetingNumber = (player.room.series.meetingNumber || 1) + 1;
+      return broadcast(player.room, { type: 'seriesContinue', meetingNumber: player.room.series.meetingNumber, series: { ...player.room.series, wins: { ...player.room.series.wins } } });
+    }
+
+    if (message.type === 'gestureStart' && player.room && player.room.players.size === 2) {
+      const gestureSeries = player.room.gestureSeries || { target: 3, round: 1, wins: Object.fromEntries(roomPlayers(player.room).map((roomPlayer) => [roomPlayer.id, 0])) };
+      player.room.gestureSeries = gestureSeries;
+      player.room.gestureSession = { choices: {}, round: gestureSeries?.round || 1 };
+      return broadcast(player.room, { type: 'gestureStart', selectedPlayerIds: [], choices: {}, players: roomPlayers(player.room).map(playerSummary), gestureSeries, roomSeries: player.room.series });
+    }
+
+    if (message.type === 'gestureChoice' && player.room?.gestureSession) {
+      const choices = player.room.gestureSession.choices;
+      if (!['rock', 'paper', 'scissors'].includes(message.choice) || choices[player.id]) return;
+      choices[player.id] = message.choice;
+      const selectedPlayerIds = Object.keys(choices);
+      if (selectedPlayerIds.length < 2) return broadcast(player.room, { type: 'gestureUpdate', selectedPlayerIds, choices, players: roomPlayers(player.room).map(playerSummary) });
+      const players = roomPlayers(player.room);
+      const [first, second] = players;
+      const beats = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
+      const winnerId = choices[first.id] === choices[second.id] ? null : (beats[choices[first.id]] === choices[second.id] ? first.id : second.id);
+      const gestureSeries = player.room.gestureSeries;
+      let complete = true;
+      let gestureSnapshot = null;
+      let roomSnapshot = player.room.series;
+      if (gestureSeries && winnerId) {
+        player.room.directionSession = { winnerId, loserId: players.find((candidate) => candidate.id !== winnerId).id, selections: {} };
+        complete = false;
+        gestureSnapshot = { ...gestureSeries, wins: { ...gestureSeries.wins } };
+      } else if (gestureSeries) {
+        complete = false;
+        gestureSeries.round += 1;
+        gestureSnapshot = { ...gestureSeries, wins: { ...gestureSeries.wins } };
+      }
+      const loserId = winnerId ? players.find((candidate) => candidate.id !== winnerId).id : null;
+      player.room.gestureSession = !complete && !winnerId ? { choices: {}, round: gestureSeries?.round || 1 } : null;
+      return broadcast(player.room, { type: 'gestureResult', choices, players: players.map(playerSummary), winner: winnerId ? playerSummary(player.room.players.get(winnerId)) : null, loser: loserId ? playerSummary(player.room.players.get(loserId)) : null, gestureSeries: gestureSnapshot, roomSeries: roomSnapshot, complete, awaitDirection: Boolean(winnerId) });
+    }
+
+    if (message.type === 'directionChoice' && player.room?.directionSession) {
+      const session = player.room.directionSession;
+      if (!['up', 'down', 'left', 'right'].includes(message.direction) || session.selections[player.id]) return;
+      session.selections[player.id] = message.direction;
+      const selectedPlayerIds = Object.keys(session.selections);
+      if (selectedPlayerIds.length < 2) return broadcast(player.room, { type: 'directionUpdate', selectedPlayerIds });
+      const correct = session.selections[session.winnerId] === session.selections[session.loserId];
+      const gestureSeries = player.room.gestureSeries;
+      let complete = false;
+      let roomSnapshot = player.room.series;
+      if (correct && gestureSeries) {
+        gestureSeries.wins[session.winnerId] = (gestureSeries.wins[session.winnerId] || 0) + 1;
+        complete = gestureSeries.wins[session.winnerId] >= 2;
+        if (complete) {
+          player.room.gestureSeries = null;
+          roomSnapshot = updateRoomSeries(player.room, session.winnerId);
+        }
+      }
+      if (!complete && gestureSeries) {
+        gestureSeries.round += 1;
+        player.room.gestureSession = { choices: {}, round: gestureSeries.round };
+      }
+      const gestureSnapshot = gestureSeries && !complete ? { ...gestureSeries, wins: { ...gestureSeries.wins } } : null;
+      const winner = player.room.players.get(session.winnerId);
+      const loser = player.room.players.get(session.loserId);
+      player.room.directionSession = null;
+      return broadcast(player.room, { type: 'directionResult', selections: session.selections, players: [playerSummary(winner), playerSummary(loser)], winner: playerSummary(winner), loser: playerSummary(loser), correct, gestureSeries: gestureSnapshot, roomSeries: roomSnapshot, complete });
+    }
+
+    if (message.type === 'cardsStart' && player.room && player.room.players.size === 2) {
+      const cards = [];
+      for (const suit of ['spades', 'hearts', 'diamonds', 'clubs']) for (let rank = 1; rank <= 13; rank += 1) cards.push({ id: `${suit}-${rank}`, suit, rank });
+      player.room.cardSession = { cards, picked: [], currentPlayerId: player.id, collections: Object.fromEntries(roomPlayers(player.room).map((roomPlayer) => [roomPlayer.id, []])) };
+      const session = player.room.cardSession;
+      return broadcast(player.room, { type: 'cardsStart', cards: session.cards, picked: [], collections: publicCollections(player.room, session), currentPlayerId: session.currentPlayerId, currentPlayerColor: player.color });
+    }
+
+    if (message.type === 'cardPick' && player.room?.cardSession) {
+      const session = player.room.cardSession;
+      if (session.currentPlayerId !== player.id || session.picked.length >= session.cards.length) return;
+      const card = session.cards.find((candidate) => candidate.id === message.cardId && !session.picked.includes(candidate.id));
+      if (!card) return;
+      session.picked.push(card.id);
+      session.collections[player.id].push(card);
+      const players = roomPlayers(player.room);
+      if (session.picked.length === session.cards.length) {
+        const totals = players.map((roomPlayer) => ({ player: roomPlayer, total: (session.collections[roomPlayer.id] || []).reduce((sum, card) => sum + card.rank, 0) }));
+        const winner = totals[0].total === totals[1].total ? null : (totals[0].total > totals[1].total ? totals[0].player : totals[1].player);
+        const loser = winner ? (winner.id === players[0].id ? players[1] : players[0]) : null;
+        const roomSeries = updateRoomSeries(player.room, winner?.id);
+        player.room.cardSession = null;
+        return broadcast(player.room, { type: 'cardResult', picked: session.picked, collections: publicCollections(player.room, session), winner: winner ? playerSummary(winner) : null, loser: loser ? playerSummary(loser) : null, series: roomSeries });
+      }
+      session.currentPlayerId = players.find((candidate) => candidate.id !== player.id).id;
+      return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, collections: publicCollections(player.room, session), currentPlayerId: session.currentPlayerId, currentPlayerColor: player.room.players.get(session.currentPlayerId).color });
+    }
+
+    if (message.type === 'diceStart' && player.room && player.room.players.size === 2) {
+      const players = roomPlayers(player.room);
+      const hands = Object.fromEntries(players.map((roomPlayer) => [roomPlayer.id, Array.from({ length: 5 }, () => crypto.randomInt(1, 7))]));
+      player.room.diceSession = { hands, currentPlayerId: player.id, calledBy: null, rerolls: Object.fromEntries(players.map((roomPlayer) => [roomPlayer.id, 2])) };
+      return broadcast(player.room, { type: 'diceStart', dice: hands[player.id], currentPlayerId: player.id, currentPlayerColor: player.color, rerollsRemaining: 2 });
+    }
+
+    if (message.type === 'diceRoll' && player.room?.diceSession) {
+      const session = player.room.diceSession;
+      if (session.currentPlayerId !== player.id || session.rerolls[player.id] <= 0) return;
+      const indices = Array.isArray(message.indices) ? message.indices : [];
+      indices.forEach((index) => { if (Number.isInteger(index) && index >= 0 && index < 5) session.hands[player.id][index] = crypto.randomInt(1, 7); });
+      session.rerolls[player.id] -= 1;
+      return broadcast(player.room, { type: 'diceUpdate', dice: session.hands[player.id], currentPlayerId: player.id, currentPlayerColor: player.color, rerollsRemaining: session.rerolls[player.id], rerolledIndices: indices });
+    }
+
+    if (message.type === 'diceCall' && player.room?.diceSession) {
+      const session = player.room.diceSession;
+      if (session.currentPlayerId !== player.id) return;
+      const players = roomPlayers(player.room);
+      if (!session.calledBy) {
+        session.calledBy = player.id;
+        session.rerolls[player.id] = 0;
+        session.currentPlayerId = players.find((candidate) => candidate.id !== player.id).id;
+        const nextPlayer = player.room.players.get(session.currentPlayerId);
+        return broadcast(player.room, { type: 'diceUpdate', dice: session.hands[nextPlayer.id], currentPlayerId: nextPlayer.id, currentPlayerColor: nextPlayer.color, rerollsRemaining: session.rerolls[nextPlayer.id], rerolledIndices: [], calledDice: session.hands[player.id], calledPlayerId: player.id });
+      }
+      const opponent = players.find((candidate) => candidate.id !== player.id);
+      const score = (session.hands[player.id] || []).reduce((sum, value) => sum + value, 0);
+      const opponentScore = (session.hands[opponent.id] || []).reduce((sum, value) => sum + value, 0);
+      const winner = score === opponentScore ? null : (score > opponentScore ? player : opponent);
+      const loser = winner ? (winner.id === player.id ? opponent : player) : null;
+      const roomSeries = updateRoomSeries(player.room, winner?.id);
+      player.room.diceSession = null;
+      return broadcast(player.room, {
+        type: 'diceResult',
+        winner: winner ? playerSummary(winner) : null,
+        loser: loser ? playerSummary(loser) : null,
+        winningDice: winner ? session.hands[winner.id] : null,
+        losingDice: loser ? session.hands[loser.id] : null,
+        winningHandName: winner ? diceHandName(session.hands[winner.id]) : null,
+        losingHandName: winner ? diceHandName(session.hands[opponent.id === winner.id ? player.id : opponent.id]) : null,
+        winningPlayerId: winner?.id || null,
+        series: roomSeries,
+      });
+    }
+
+    if (message.type === 'judge' && player.room && player.room.players.size === 2) {
       const players = [...player.room.players.values()];
       const winner = players[crypto.randomInt(players.length)];
       const loser = players.find((candidate) => candidate.id !== winner.id);
-      const series = recordSeriesResult(player.room, winner.id, loser.id, 'judge');
-      player.room.result = { winnerId: winner.id, color: winner.color, method: 'judge', series };
-      return broadcast(player.room, { type: 'result', series, winner: { id: winner.id, color: winner.color, shape: winner.shape }, loser: { id: loser.id, color: loser.color, shape: loser.shape } });
+      player.room.result = { winnerId: winner.id, color: winner.color };
+      const roomSeries = updateRoomSeries(player.room, winner.id);
+      return broadcast(player.room, {
+        type: 'result',
+        winner: { id: winner.id, color: winner.color, shape: winner.shape },
+        loser: { id: loser.id, color: loser.color, shape: loser.shape },
+        series: roomSeries,
+      });
     }
 
-    if (message.type === 'straws' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
+    if (message.type === 'straws' && player.room && player.room.players.size === 2) {
       if (player.room.strawSession) return;
       const argumentLength = [...player.room.players.values()].reduce((total, roomPlayer) => total + roomPlayer.argument.length, 0);
       const strawCount = Math.max(3, Math.min(18, argumentLength));
       const shortIndex = crypto.randomInt(strawCount);
       const straws = Array.from({ length: strawCount }, (_, index) => ({
         id: `straw-${index}`,
-        height: 330,
+        height: 320,
         short: index === shortIndex,
         angle: crypto.randomInt(-4, 5),
       }));
@@ -160,13 +305,14 @@ websocketServer.on('connection', (socket) => {
         const winner = players
           .filter((candidate) => candidate.id !== loser.id)
           .sort((left, right) => (session.tallies.get(right.id) || 0) - (session.tallies.get(left.id) || 0))[0];
+        const roomSeries = updateRoomSeries(player.room, winner.id);
         player.room.strawSession = null;
-        const series = recordSeriesResult(player.room, winner.id, loser.id, 'straws');
-        player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', tallies: publicStrawTallies(player.room, session), series };
+        player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', tallies: publicStrawTallies(player.room, session) };
         return broadcast(player.room, {
-          type: 'result', method: 'straws', series, tallies: publicStrawTallies(player.room, session),
+          type: 'result', method: 'straws', tallies: publicStrawTallies(player.room, session),
           winner: { id: winner.id, color: winner.color, shape: winner.shape },
           loser: { id: loser.id, color: loser.color, shape: loser.shape },
+          series: roomSeries,
         });
       }
       if (session.drawn.length < session.straws.length) {
@@ -178,195 +324,20 @@ websocketServer.on('connection', (socket) => {
       const loser = player.room.players.get(loserDraw.playerId);
       const winner = [...player.room.players.values()].find((candidate) => candidate.id !== loser.id);
       player.room.strawSession = null;
-      const series = recordSeriesResult(player.room, winner.id, loser.id, 'straws');
-      player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws', series };
+      player.room.result = { winnerId: winner.id, loserId: loser.id, color: winner.color, method: 'straws' };
       return broadcast(player.room, {
         type: 'result',
-        series,
         method: 'straws',
         winner: { id: winner.id, color: winner.color, shape: winner.shape },
         loser: { id: loser.id, color: loser.color, shape: loser.shape },
       });
-    }
-
-    if (message.type === 'gestureStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
-      if (player.room.gestureSession) return;
-      player.room.gestureSession = { choices: new Map() };
-      return broadcast(player.room, { type: 'gestureStart', selectedPlayerIds: [] });
-    }
-
-    if (message.type === 'gestureChoice' && player.room?.gestureSession) {
-      const session = player.room.gestureSession;
-      const choice = ['rock', 'paper', 'scissors'].includes(message.choice) ? message.choice : null;
-      if (!choice || session.choices.has(player.id)) return;
-      session.choices.set(player.id, choice);
-      const selectedPlayerIds = [...session.choices.keys()];
-      if (session.choices.size < player.room.players.size) {
-        return broadcast(player.room, { type: 'gestureUpdate', selectedPlayerIds });
-      }
-
-      const players = [...player.room.players.values()];
-      const [first, second] = players;
-      const firstChoice = session.choices.get(first.id);
-      const secondChoice = session.choices.get(second.id);
-      const winningChoices = { rock: 'scissors', paper: 'rock', scissors: 'paper' };
-      const winner = firstChoice === secondChoice
-        ? null
-        : (winningChoices[firstChoice] === secondChoice ? first : second);
-      const gestureResult = {
-        type: 'gestureResult',
-        choices: { [first.id]: firstChoice, [second.id]: secondChoice },
-        winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null,
-        loser: winner ? { id: winner.id === first.id ? second.id : first.id, color: winner.id === first.id ? second.color : first.color, shape: winner.id === first.id ? second.shape : first.shape } : null,
-        series: winner ? recordSeriesResult(player.room, winner.id, winner.id === first.id ? second.id : first.id, 'gesture') : null,
-      };
-      player.room.gestureSession = winner ? null : { choices: new Map() };
-      player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'gesture' } : null;
-      return broadcast(player.room, gestureResult);
-    }
-
-    if (message.type === 'cardsStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
-      if (player.room.cardSession) return;
-      const suits = [
-        { name: 'spades', offset: 0 },
-        { name: 'hearts', offset: 0x10 },
-        { name: 'diamonds', offset: 0x20 },
-        { name: 'clubs', offset: 0x30 },
-      ];
-      const cards = suits.flatMap((suit) => Array.from({ length: 13 }, (_, index) => {
-        const rank = index + 1;
-        return { id: `${suit.name}-${rank}`, suit: suit.name, rank, value: rank === 1 ? 1 : Math.min(rank, 10) };
-      }));
-      for (let index = cards.length - 1; index > 0; index -= 1) {
-        const swapIndex = crypto.randomInt(index + 1);
-        [cards[index], cards[swapIndex]] = [cards[swapIndex], cards[index]];
-      }
-      player.room.cardSession = {
-        cards,
-        currentPlayerId: hostId(player.room),
-        picked: [],
-        collections: new Map([...player.room.players.keys()].map((id) => [id, []])),
-        totals: new Map([...player.room.players.keys()].map((id) => [id, 0])),
-      };
-      return broadcast(player.room, { type: 'cardsStart', cards, currentPlayerId: hostId(player.room), currentPlayerColor: player.color, collections: publicCardCollections(player.room, player.room.cardSession) });
-    }
-
-    if (message.type === 'cardPick' && player.room?.cardSession) {
-      const session = player.room.cardSession;
-      const card = session.cards.find((candidate) => candidate.id === message.cardId);
-      if (session.currentPlayerId !== player.id || !card || session.picked.includes(card.id)) return;
-      session.picked.push(card.id);
-      session.collections.get(player.id).push(card);
-      session.totals.set(player.id, (session.totals.get(player.id) || 0) + card.value);
-      const collections = publicCardCollections(player.room, session);
-      if (session.picked.length === session.cards.length) {
-        const players = [...player.room.players.values()];
-        const firstTotal = session.totals.get(players[0].id) || 0;
-        const secondTotal = session.totals.get(players[1].id) || 0;
-        const winner = firstTotal === secondTotal ? null : (firstTotal > secondTotal ? players[0] : players[1]);
-        player.room.cardSession = null;
-        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'cards', collections } : null;
-        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'cards') : null;
-        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
-        return broadcast(player.room, { type: 'cardResult', method: 'cards', collections, series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null });
-      }
-      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
-      session.currentPlayerId = otherPlayer.id;
-      return broadcast(player.room, { type: 'cardUpdate', cards: session.cards, picked: session.picked, currentPlayerId: session.currentPlayerId, currentPlayerColor: otherPlayer.color, collections });
-    }
-
-    if (message.type === 'diceStart' && player.room && player.room.players.size === 2 && player.id === gameChooserId(player.room)) {
-      if (player.room.diceSession) return;
-      const players = [...player.room.players.values()];
-      player.room.diceSession = {
-        currentPlayerId: hostId(player.room),
-        hands: new Map(players.map((roomPlayer) => [roomPlayer.id, { dice: rollDice(), rolls: 0, called: false }])),
-      };
-      player.room.players.forEach((roomPlayer) => send(roomPlayer.socket, { ...publicDiceState(player.room, player.room.diceSession, roomPlayer.id), type: 'diceStart' }));
-      return;
-    }
-
-    if (message.type === 'diceRoll' && player.room?.diceSession) {
-      const session = player.room.diceSession;
-      const hand = session.hands.get(player.id);
-      if (hand.called || hand.rolls >= 3) return;
-      const selected = Array.isArray(message.indices) ? [...new Set(message.indices.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < 5))] : [];
-      if (selected.length > 5) return;
-      selected.forEach((index) => { hand.dice[index] = crypto.randomInt(1, 7); });
-      hand.rolls += 1;
-      if (hand.rolls >= 3) hand.called = true;
-      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
-      if (hand.called && otherPlayer && session.hands.get(otherPlayer.id).called) {
-        const players = [...player.room.players.values()];
-        const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
-        const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
-        const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
-        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'dice') : null;
-        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
-        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null };
-        player.room.diceSession = null;
-        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
-        return broadcast(player.room, diceResult);
-      }
-      sendDiceStates(player.room, session);
-      return;
-    }
-
-    if (message.type === 'diceCall' && player.room?.diceSession) {
-      const session = player.room.diceSession;
-      const hand = session.hands.get(player.id);
-      if (hand.called) return;
-      hand.called = true;
-      const otherPlayer = [...player.room.players.values()].find((candidate) => candidate.id !== player.id);
-      if (!otherPlayer || session.hands.get(otherPlayer.id).called) {
-        const players = [...player.room.players.values()];
-        const evaluations = players.map((roomPlayer) => ({ id: roomPlayer.id, hand: evaluateDiceHand(session.hands.get(roomPlayer.id).dice) }));
-        const comparison = compareDiceHands(evaluations[0].hand, evaluations[1].hand);
-        const winner = comparison === 0 ? null : (comparison > 0 ? players[0] : players[1]);
-        const series = winner ? recordSeriesResult(player.room, winner.id, winner.id === players[0].id ? players[1].id : players[0].id, 'dice') : null;
-        const loser = winner ? players.find((candidate) => candidate.id !== winner.id) : null;
-        const diceResult = { type: 'diceResult', hands: players.map((roomPlayer) => ({ id: roomPlayer.id, dice: session.hands.get(roomPlayer.id).dice, category: evaluateDiceHand(session.hands.get(roomPlayer.id).dice).category })), series, winner: winner ? { id: winner.id, color: winner.color, shape: winner.shape } : null, loser: loser ? { id: loser.id, color: loser.color, shape: loser.shape } : null };
-        player.room.diceSession = null;
-        player.room.result = winner ? { winnerId: winner.id, color: winner.color, method: 'dice' } : null;
-        return broadcast(player.room, diceResult);
-      }
-      return sendDiceStates(player.room, session);
-    }
-
-    if (message.type === 'rematchRequest' && player.room?.lastResult) {
-      const bestOf = [3, 5].includes(Number(message.bestOf)) ? Number(message.bestOf) : 3;
-      if (player.room.series.target && [...player.room.series.wins.values()].some((wins) => wins >= player.room.series.target)) return;
-      if (player.id !== player.room.lastResult.loserId) return;
-      player.room.series.target = bestOf;
-      player.room.series.chooserId = player.id;
-      const winner = player.room.players.get(player.room.lastResult.winnerId);
-      if (winner) send(winner.socket, { type: 'rematchOffer', bestOf, meetingNumber: player.room.series.meetings + 1, scores: player.room.lastResult.series?.scores || [] });
-      return;
-    }
-
-    if (message.type === 'rematchResponse' && player.room?.lastResult && player.id === player.room.lastResult.winnerId) {
-      const loser = player.room.players.get(player.room.lastResult.loserId);
-      if (!loser) return;
-      if (message.accepted) {
-        player.room.result = null;
-        player.room.strawSession = null;
-        player.room.gestureSession = null;
-        player.room.cardSession = null;
-        player.room.diceSession = null;
-        return broadcast(player.room, { type: 'rematchReady', bestOf: player.room.series.target || 3, chooserId: player.room.series.chooserId, meetingNumber: player.room.series.meetings + 1, scores: [...player.room.players.keys()].map((id) => ({ id, wins: player.room.series.wins.get(id) || 0, losses: player.room.series.losses.get(id) || 0 })) });
-      }
-      return send(loser.socket, { type: 'rematchDeclined' });
     }
   });
 
   socket.on('close', () => {
     if (!player.room) return;
     player.room.strawSession = null;
-    player.room.gestureSession = null;
-    player.room.cardSession = null;
-    player.room.diceSession = null;
     player.room.players.delete(player.id);
-    if (player.room.hostId === player.id) player.room.hostId = [...player.room.players.keys()][0] || null;
     if (player.room.players.size === 0) rooms.delete(player.room.name.toLowerCase());
     else broadcastRoom(player.room);
     broadcastRoomDirectory();

@@ -15,11 +15,11 @@
         <header class="page-header">
           <p class="eyebrow eyebrow-brand"><button class="eyebrow-icon-button" id="kingShapeButton" type="button" aria-label="Choose King"><img src="./Element/Royal%20Rat%20Insignia.png" alt="" /></button><span id="pageEyebrow">King of Nothing Presents</span></p>
           <h1 id="page-title">Deciding<br /><span>Judge</span></h1>
-          <p class="intro" id="stepInstruction">Choose a shape to begin.</p>
+          <p class="intro" id="stepInstruction">Choose your symbol to start.</p>
         </header>
         <!-- One step is visible at a time so the setup stays quick and focused. -->
         <form id="roomForm" class="room-form">
-          <section class="fate-step" id="shapeStep" aria-labelledby="shapeTitle">
+          <section class="fate-step setup-choice-group" id="shapeStep" aria-labelledby="shapeTitle">
             <div class="shape-options">
               <button class="shape-option" type="button" data-shape="diamond" aria-label="Diamond">◆</button>
               <button class="shape-option" type="button" data-shape="spade" aria-label="Spade">♠</button>
@@ -28,7 +28,7 @@
             </div>
           </section>
 
-          <section class="fate-step is-hidden" id="colorStep">
+          <section class="fate-step setup-choice-group is-hidden" id="colorStep" aria-labelledby="colorTitle">
             <div class="color-options">
               <button class="color-option color-option--red" type="button" data-color="red" aria-label="Red"><span class="color-swatch"></span></button>
               <button class="color-option color-option--blue" type="button" data-color="blue" aria-label="Blue"><span class="color-swatch"></span></button>
@@ -55,6 +55,7 @@
         <p class="eyebrow" id="meetingLabel">Meeting in Session</p>
         <h2>Deciding for<br /><span id="roomHeadingName">----</span></h2>
         <div class="players" id="players" aria-live="polite"></div>
+        <div class="series-score is-hidden" id="seriesScore" aria-live="polite"></div>
         <div class="game-selection" aria-label="Choose a game">
           <button class="judge-button" id="judgeButton" type="button" disabled><span class="game-icon">&#xA2;</span><span class="game-label">Call Upon Judgement</span></button>
           <button class="straw-button" id="strawButton" type="button" disabled><span class="game-icon">&#x15D0;</span><span class="game-label">Consult the Straws</span></button>
@@ -83,12 +84,13 @@
 
     <section class="verdict-overlay" id="verdictOverlay" aria-live="assertive" aria-hidden="true">
       <div class="verdict-color-field" id="verdictColorField" aria-hidden="true"></div>
-      <div class="verdict-content"><p class="eyebrow">Final Ruling</p><h2 id="verdictWinner"></h2><p id="verdictSubtext"></p><div class="rematch-panel is-hidden" id="rematchPanel"><p id="rematchPrompt"></p><div class="rematch-actions"><button class="rematch-button" id="bestOfThreeButton" type="button">Best of 3</button><button class="rematch-button" id="bestOfFiveButton" type="button">Best of 5</button><button class="rematch-button is-hidden" id="acceptRematchButton" type="button">Accept</button><button class="rematch-button is-hidden" id="declineRematchButton" type="button">Decline</button></div></div></div>
+      <div class="verdict-content"><p class="eyebrow" id="verdictHeading">Verdict<span class="verdict-question-mark is-hidden" id="verdictQuestionMark">?</span></p><p class="verdict-ruling-label is-hidden" id="verdictRulingLabel">Ruling in favor of</p><h2 class="verdict-argument is-hidden" id="verdictArgument"></h2><div class="verdict-winner-symbol" id="verdictWinner"></div><p id="verdictSubtext"></p><p class="verdict-series-subtext is-hidden" id="verdictSeriesSubtext"></p><div class="verdict-winning-hand is-hidden" id="verdictWinningHand"></div><div class="rematch-panel is-hidden" id="rematchPanel"><p id="rematchPrompt"></p><div class="rematch-actions"><button class="rematch-button" id="bestOfThreeButton" type="button">Best of 3</button><button class="rematch-button" id="bestOfFiveButton" type="button">Best of 5</button><button class="rematch-button is-hidden" id="continueSeriesButton" type="button">Continue</button><button class="rematch-button is-hidden" id="acceptRematchButton" type="button">Accept</button><button class="rematch-button is-hidden" id="declineRematchButton" type="button">Decline</button></div></div></div>
     </section>
 
     <section class="gesture-overlay" id="gestureOverlay" aria-live="polite" aria-hidden="true">
       <div class="gesture-content">
         <p class="eyebrow">Duel By Gesture</p>
+        <p class="gesture-round" id="gestureRound"></p>
         <h2>Choose your<br /><span>gesture.</span></h2>
         <p id="gestureInstruction">Choose rock, paper, or scissors.</p>
         <div class="gesture-choices" id="gestureChoices"></div>
@@ -113,6 +115,7 @@
         <h2>Roll the<br /><span>bones.</span></h2>
         <p id="diceInstruction">The host rolls first.</p>
         <div class="dice-hand" id="diceHand"></div>
+        <div class="dice-called-hand is-hidden" id="diceCalledHand" aria-live="polite"></div>
         <div class="dice-actions"><button class="dice-action dice-reroll-action" id="rerollDiceButton" type="button" aria-label="Reroll selected dice">↻</button><button class="dice-action" id="callDiceButton" type="button">Call</button></div>
       </div>
     </section>

@@ -17,6 +17,7 @@ const loginView = document.querySelector('#loginView');
 const roomView = document.querySelector('#roomView');
 const roomCombinedGlow = document.querySelector('#roomCombinedGlow');
 const meetingLabel = document.querySelector('#meetingLabel');
+const seriesScore = document.querySelector('#seriesScore');
 const playersElement = document.querySelector('#players');
 const judgeButton = document.querySelector('#judgeButton');
 const strawButton = document.querySelector('#strawButton');
@@ -26,12 +27,20 @@ const diceButton = document.querySelector('#diceButton');
 const resultElement = document.querySelector('#result');
 const verdictOverlay = document.querySelector('#verdictOverlay');
 const verdictColorField = document.querySelector('#verdictColorField');
+const verdictContent = document.querySelector('.verdict-content');
+const verdictHeading = document.querySelector('#verdictHeading');
+const verdictRulingLabel = document.querySelector('#verdictRulingLabel');
+const verdictArgument = document.querySelector('#verdictArgument');
+const verdictQuestionMark = document.querySelector('#verdictQuestionMark');
 const verdictWinner = document.querySelector('#verdictWinner');
 const verdictSubtext = document.querySelector('#verdictSubtext');
+const verdictSeriesSubtext = document.querySelector('#verdictSeriesSubtext');
+const verdictWinningHand = document.querySelector('#verdictWinningHand');
 const rematchPanel = document.querySelector('#rematchPanel');
 const rematchPrompt = document.querySelector('#rematchPrompt');
 const bestOfThreeButton = document.querySelector('#bestOfThreeButton');
 const bestOfFiveButton = document.querySelector('#bestOfFiveButton');
+const continueSeriesButton = document.querySelector('#continueSeriesButton');
 const acceptRematchButton = document.querySelector('#acceptRematchButton');
 const declineRematchButton = document.querySelector('#declineRematchButton');
 const transitionOverlay = document.querySelector('#transitionOverlay');
@@ -42,6 +51,7 @@ const strawChoices = document.querySelector('#strawChoices');
 const strawTallies = document.querySelector('#strawTallies');
 const gestureOverlay = document.querySelector('#gestureOverlay');
 const gestureInstruction = document.querySelector('#gestureInstruction');
+const gestureRound = document.querySelector('#gestureRound');
 const gestureChoices = document.querySelector('#gestureChoices');
 const gestureReveal = document.querySelector('#gestureReveal');
 const cardsOverlay = document.querySelector('#cardsOverlay');
@@ -52,14 +62,19 @@ const cardDeck = document.querySelector('#cardDeck');
 const diceOverlay = document.querySelector('#diceOverlay');
 const diceInstruction = document.querySelector('#diceInstruction');
 const diceHand = document.querySelector('#diceHand');
+const diceCalledHand = document.querySelector('#diceCalledHand');
+document.querySelector('.dice-actions').after(diceCalledHand);
 const rerollDiceButton = document.querySelector('#rerollDiceButton');
 const callDiceButton = document.querySelector('#callDiceButton');
+const BLACKOUT_DURATION = 440;
 const socketState = { socket: null, player: null, hostId: null, shape: null, color: null };
 let selectedRoomName = '';
 let renderedCardCount = 0;
 let selectedDice = new Set();
+let knownDrawnStraws = new Set();
 let currentRoomState = null;
 let nextMeetingNumber = 1;
+let currentGameMode = 'judge';
 const kingIconPath = './Element/Royal%20Rat%20Insignia.png';
 const shapeGlyphs = { square: '■', diamond: '◆', spade: '♠', club: '♣', heart: '♥' };
 
@@ -79,6 +94,24 @@ function fadeBetween(update, reveal = true) {
 }
 
 function send(type, data = {}) { if (socketState.socket?.readyState === WebSocket.OPEN) socketState.socket.send(JSON.stringify({ type, ...data })); }
+function fadeToGame(type, data = {}) {
+  transitionOverlay.classList.add('is-active');
+  window.setTimeout(() => send(type, data), BLACKOUT_DURATION);
+}
+function revealAfterBlack(render) {
+  transitionOverlay.classList.add('is-active');
+  window.setTimeout(() => {
+    render();
+    window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 520);
+  }, BLACKOUT_DURATION);
+}
+function hideGameSurfaces() {
+  [strawOverlay, gestureOverlay, cardsOverlay, diceOverlay].forEach((overlay) => {
+    overlay.classList.remove('is-visible');
+    overlay.setAttribute('aria-hidden', 'true');
+  });
+  roomView.classList.add('is-hidden');
+}
 function colorClass(color) { return `player-swatch player-swatch--${color}`; }
 function shapeGlyph(shape) { return shapeGlyphs[shape] || '•'; }
 function shapeMarkup(shape) { return shape === 'king' ? `<img class="king-icon" src="${kingIconPath}" alt="King" />` : shapeGlyph(shape); }
@@ -113,8 +146,11 @@ function animateDie(die, finalValue) {
 
 function renderDiceState(message) {
   const myTurn = message.currentPlayerId === socketState.player;
-  const canAct = myTurn && !message.called;
-  diceInstruction.textContent = canAct ? 'Select die to reroll.' : 'Waiting for the other player.';
+  const turnActive = myTurn && !message.called;
+  const rerollsRemaining = message.rerollsRemaining ?? 0;
+  const canAct = turnActive && rerollsRemaining > 0;
+  diceInstruction.textContent = turnActive ? (rerollsRemaining > 0 ? `Select die to reroll. ${rerollsRemaining} reroll${rerollsRemaining === 1 ? '' : 's'} left.` : 'No rerolls left. Call to pass.') : 'Waiting for the other player.';
+  const animatedIndices = message.rerolledIndices ? new Set(message.rerolledIndices) : null;
   diceHand.innerHTML = (message.dice || []).map((value, index) => `<button class="die${selectedDice.has(index) ? ' is-selected' : ''}" type="button" data-index="${index}" ${canAct ? '' : 'disabled'} aria-label="Die showing ${value}">${diceSymbol(value)}</button>`).join('');
   diceHand.querySelectorAll('.die').forEach((die) => die.addEventListener('click', () => {
     const index = Number(die.dataset.index);
@@ -122,9 +158,16 @@ function renderDiceState(message) {
     die.classList.toggle('is-selected', selectedDice.has(index));
     rerollDiceButton.disabled = !canAct || selectedDice.size === 0;
   }));
-  diceHand.querySelectorAll('.die').forEach((die, index) => animateDie(die, message.dice[index]));
+  diceHand.querySelectorAll('.die').forEach((die, index) => {
+    if (!animatedIndices || animatedIndices.has(index)) animateDie(die, message.dice[index]);
+  });
+  if (message.calledDice) {
+    const calledByMe = message.calledPlayerId === socketState.player;
+    diceCalledHand.innerHTML = `<small>${calledByMe ? 'Your called hand' : "Opponent's called hand"}</small><div class="dice-called-values">${message.calledDice.map((value) => `<span>${diceSymbol(value)}</span>`).join('')}</div>`;
+    diceCalledHand.classList.remove('is-hidden');
+  }
   rerollDiceButton.disabled = !canAct || selectedDice.size === 0;
-  callDiceButton.disabled = !canAct;
+  callDiceButton.disabled = !turnActive;
   diceOverlay.className = `dice-overlay dice-overlay--${message.currentPlayerColor || 'white'} is-visible`;
   diceOverlay.setAttribute('aria-hidden', 'false');
 }
@@ -145,14 +188,18 @@ function renderCardGame(message) {
   if (!message.picked || message.picked.length === 0) renderedCardCount = 0;
   const turnPlayer = (message.collections || []).find((collection) => collection.id === message.currentPlayerId);
   const turnColor = message.currentPlayerColor || turnPlayer?.color || socketState.color || 'white';
-  cardsInstruction.textContent = message.currentPlayerId === socketState.player ? 'Your turn. Pick one card.' : 'Waiting for the other player.';
+  const ownCollection = (message.collections || []).find((collection) => collection.id === socketState.player);
+  const ownTotal = ownCollection?.total || 0;
+  cardsInstruction.textContent = message.currentPlayerId === socketState.player
+    ? `Your turn. Pick one card. Your total: ${ownTotal} points.`
+    : `Waiting for the other player. Your total: ${ownTotal} points.`;
   renderCardCollections(message.collections || []);
   cardDeck.innerHTML = '';
   (message.cards || []).forEach((card) => {
     const cardButton = document.createElement('button');
     cardButton.className = `card-pick${picked.has(card.id) ? ' is-picked' : ''}`;
     cardButton.type = 'button';
-    cardButton.textContent = picked.has(card.id) ? '' : '\u{1F0A0}';
+    cardButton.textContent = '\u{1F0A0}';
     cardButton.disabled = picked.has(card.id) || message.currentPlayerId !== socketState.player;
     cardButton.setAttribute('aria-label', picked.has(card.id) ? 'Card already drawn' : 'Pick a face-down card');
     if (!picked.has(card.id)) cardButton.addEventListener('click', () => {
@@ -179,16 +226,10 @@ function clearRoomSelection() {
 function positionBackButton() {
   if (backButton.classList.contains('is-hidden')) return;
   backButton.style.position = 'fixed';
-  const activeStep = [shapeStep, colorStep, roomStep].find((step) => !step.classList.contains('is-hidden'));
-  if (!activeStep) return;
-  const selectionBox = activeStep === roomStep
-    ? roomStep.querySelector('.room-variable')
-    : [...activeStep.querySelectorAll('.shape-options, .color-options')]
-      .find((element) => !element.classList.contains('is-hidden'));
-  const bounds = (selectionBox || activeStep).getBoundingClientRect();
-  const arrowGap = 18;
-  backButton.style.left = `${Math.max(12, bounds.left - backButton.offsetWidth - arrowGap)}px`;
-  backButton.style.top = `${bounds.top + (bounds.height / 2) - 10}px`;
+  backButton.style.left = 'max(16px, env(safe-area-inset-left))';
+  backButton.style.top = 'auto';
+  backButton.style.bottom = 'max(16px, env(safe-area-inset-bottom))';
+  backButton.style.transform = 'none';
 }
 
 function renderRoomDirectory(rooms) {
@@ -237,6 +278,14 @@ function renderRoom(room) {
   meetingLabel.textContent = room.series?.target && nextMeetingNumber > 1
     ? `${meetingWords[nextMeetingNumber - 1] || `${nextMeetingNumber}th`} meeting in session`
     : 'Meeting in Session';
+  if (room.series?.target) {
+    const scores = room.players.map((roomPlayer) => `<span class="series-player"><span class="series-player-symbol">${shapeMarkup(roomPlayer.shape)}</span><strong>${room.series.wins?.[roomPlayer.id] || 0}</strong></span>`).join('<span class="series-divider">—</span>');
+    seriesScore.innerHTML = `<small>Best of ${room.series.target}</small><div>${scores}</div>`;
+    seriesScore.classList.remove('is-hidden');
+  } else {
+    seriesScore.classList.add('is-hidden');
+    seriesScore.innerHTML = '';
+  }
   playersElement.innerHTML = '';
   const duelElement = document.createElement('div');
   duelElement.className = 'player-duel';
@@ -287,7 +336,7 @@ function renderRoom(room) {
   });
 }
 
-function renderGestureChoices(selectedPlayerIds = []) {
+function renderGestureChoices(selectedPlayerIds = [], choices = {}) {
   const alreadySelected = selectedPlayerIds.includes(socketState.player);
   gestureChoices.innerHTML = '';
   ['rock', 'paper', 'scissors'].forEach((gesture) => {
@@ -295,10 +344,14 @@ function renderGestureChoices(selectedPlayerIds = []) {
     choiceButton.className = 'gesture-choice';
     choiceButton.type = 'button';
     choiceButton.disabled = alreadySelected;
+    if (choices[socketState.player] === gesture) choiceButton.classList.add('is-selected');
+    else if (alreadySelected) choiceButton.classList.add('is-unavailable');
     choiceButton.setAttribute('aria-label', `Choose ${gesture}`);
-    choiceButton.innerHTML = `${gestureMarkup(gesture)}<span>${gesture}</span>`;
+    choiceButton.innerHTML = gestureMarkup(gesture);
     choiceButton.addEventListener('click', () => {
       gestureChoices.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+      choiceButton.classList.add('is-selected');
+      gestureChoices.querySelectorAll('button').forEach((button) => { if (button !== choiceButton) button.classList.add('is-unavailable'); });
       gestureInstruction.textContent = 'Waiting for the other player.';
       send('gestureChoice', { choice: gesture });
     });
@@ -308,44 +361,144 @@ function renderGestureChoices(selectedPlayerIds = []) {
 
 function renderGestureStart(message) {
   gestureReveal.innerHTML = '';
+  gestureChoices.classList.remove('is-direction-mode');
+  gestureInstruction.classList.remove('is-direction-instruction');
+  gestureOverlay.querySelector('.gesture-content h2').innerHTML = 'Choose your<br /><span>gesture.</span>';
   gestureInstruction.textContent = 'Choose rock, paper, or scissors.';
-  renderGestureChoices(message.selectedPlayerIds || []);
+  gestureRound.textContent = `ROUND ${message.gestureSeries?.round || message.round || 1}`;
+  renderGestureChoices(message.selectedPlayerIds || [], message.choices || {});
+  gestureOverlay.setAttribute('aria-hidden', 'false');
+  gestureOverlay.classList.add('is-visible');
+}
+
+const directionGlyphs = { up: '↑', down: '↓', left: '←', right: '→' };
+function renderDirectionChoices(message) {
+  gestureReveal.innerHTML = '';
+  gestureChoices.classList.add('is-direction-mode');
+  gestureInstruction.classList.remove('is-direction-instruction');
+  gestureOverlay.querySelector('.gesture-content h2').innerHTML = 'Choose your<br /><span>direction.</span>';
+  gestureReveal.classList.remove('is-resolving', 'is-tie');
+  gestureRound.textContent = `ROUND ${message.gestureSeries?.round || 1}`;
+  gestureInstruction.textContent = '';
+  const selected = new Set(message.selectedPlayerIds || []);
+  const choices = document.createElement('div');
+  choices.className = 'direction-choices';
+  Object.entries(directionGlyphs).forEach(([direction, glyph]) => {
+    const button = document.createElement('button');
+    button.className = `direction-choice direction-choice--${direction}`;
+    button.type = 'button';
+    button.textContent = glyph;
+    button.setAttribute('aria-label', `Choose ${direction}`);
+    button.disabled = selected.has(socketState.player);
+    button.addEventListener('click', () => {
+      choices.querySelectorAll('button').forEach((choice) => { choice.disabled = true; choice.classList.toggle('is-unavailable', choice !== button); });
+      button.classList.add('is-selected');
+      gestureInstruction.textContent = 'Waiting for the other player.';
+      send('directionChoice', { direction });
+    });
+    choices.appendChild(button);
+  });
+  gestureChoices.innerHTML = '';
+  gestureChoices.appendChild(choices);
+  gestureOverlay.setAttribute('aria-hidden', 'false');
+  gestureOverlay.classList.add('is-visible');
+}
+
+function showDirectionResult(message) {
+  gestureChoices.innerHTML = '';
+  gestureReveal.classList.remove('is-resolving', 'is-tie');
+  gestureInstruction.textContent = message.correct ? 'Correct guess. Point claimed.' : 'Wrong guess. No point claimed.';
+  const players = message.players || [];
+  const orderedPlayers = [players.find((player) => player.id !== socketState.player), players.find((player) => player.id === socketState.player)].filter(Boolean);
+  gestureReveal.innerHTML = orderedPlayers.map((player) => `<div class="gesture-result-card"><span class="direction-result-glyph">${directionGlyphs[message.selections[player.id]]}</span></div>`).join('');
   gestureOverlay.setAttribute('aria-hidden', 'false');
   gestureOverlay.classList.add('is-visible');
 }
 
 function showGestureResult(message) {
   gestureChoices.innerHTML = '';
-  const players = [...document.querySelectorAll('.player-token')].filter((token) => !token.classList.contains('player-token--empty'));
-  const roomPlayers = players.map((token) => token.getAttribute('aria-label') || 'Player');
-  const choiceCards = Object.entries(message.choices).map(([playerId, gesture], index) => {
-    const winnerClass = message.winner?.id === playerId ? ' is-winner' : '';
-    return `<div class="gesture-result-card${winnerClass}"><span>${roomPlayers[index] || 'Player'}</span>${gestureMarkup(gesture)}<strong>${gesture}</strong></div>`;
+  const roomPlayerList = message.players || currentRoomState?.players || [];
+  const opponent = roomPlayerList.find((player) => player.id !== socketState.player);
+  const orderedPlayers = [opponent, roomPlayerList.find((player) => player.id === socketState.player)].filter(Boolean);
+  const choiceCards = orderedPlayers.map((player, index) => {
+    const gesture = message.choices[player.id];
+    const winnerClass = message.winner?.id === player.id ? ' is-winner' : '';
+    const playerLabel = `${player.color} ${player.shape}`;
+    return `<div class="gesture-result-card gesture-result-card--${index === 0 ? 'top' : 'bottom'}${winnerClass}"><span class="gesture-choice-visual">${gestureMarkup(gesture)}<span class="gesture-player-badge gesture-player-badge--${player.color}">${shapeMarkup(player.shape)}</span></span></div>`;
   }).join('<span class="gesture-versus">V</span>');
   gestureReveal.innerHTML = choiceCards;
-  gestureInstruction.textContent = message.winner ? 'The gesture has spoken.' : 'A draw. Choose again.';
+  gestureInstruction.textContent = message.winner ? 'The gesture has spoken.' : 'A draw.';
+  gestureReveal.classList.remove('is-resolving', 'is-tie');
+  gestureReveal.classList.remove('is-resolving');
   gestureOverlay.classList.add('is-visible');
   gestureOverlay.setAttribute('aria-hidden', 'false');
-  if (!message.winner) window.setTimeout(() => renderGestureChoices([]), 800);
 }
 
 function showVerdict(color, shape, result) {
+  hideGameSurfaces();
+  if (result?.method) currentGameMode = result.method;
+  if (result?.series) currentRoomState.series = result.series;
+  verdictContent.classList.remove('is-refreshing');
+  void verdictContent.offsetWidth;
+  verdictContent.classList.add('is-refreshing');
+  verdictHeading.firstChild.textContent = 'Verdict';
+  verdictQuestionMark.classList.remove('is-visible');
+  verdictQuestionMark.classList.add('is-hidden');
+  verdictRulingLabel.classList.add('is-hidden');
+  verdictArgument.classList.add('is-hidden');
+  verdictArgument.textContent = '';
+  verdictWinningHand.classList.add('is-hidden');
+  verdictWinningHand.innerHTML = '';
+  continueSeriesButton.classList.add('is-hidden');
+  verdictSeriesSubtext.classList.add('is-hidden');
+  verdictSeriesSubtext.textContent = '';
   verdictColorField.className = `verdict-color-field verdict-color-field--${color}`;
-  verdictWinner.className = `verdict-winner--${color}`;
+  verdictWinner.className = `verdict-winner-symbol verdict-winner--${color}`;
   verdictWinner.innerHTML = shape ? shapeMarkup(shape) : 'Draw';
   verdictWinner.setAttribute('aria-label', `${shape} wins`);
+  const winnerPlayer = currentRoomState?.players?.find((player) => player.id === result?.winner?.id);
+  const isFinalRuling = !result?.series || result.series.complete;
+  if (result?.winner && isFinalRuling) {
+    verdictArgument.textContent = winnerPlayer?.argument || shape || 'The table';
+    verdictArgument.classList.remove('is-hidden');
+  }
   const isStrawLoss = result?.method === 'straws' && result.loser?.id === socketState.player;
   const winnerTotal = result?.collections?.find((collection) => collection.id === result.winner?.id)?.total;
+  const loserTotal = result?.collections?.find((collection) => collection.id === result.loser?.id)?.total;
   verdictSubtext.textContent = result?.method === 'cards'
-    ? (result.winner ? `Ruling in favor of the ${shape}. ${winnerTotal} points. Meeting adjourned` : 'The cards are tied. Meeting adjourned')
+    ? (result.winner ? `Ruling in favor of the ${shape || 'winner'}, who had ${winnerTotal || 0} points over ${loserTotal || 0} points. Meeting adjourned` : 'The cards are tied. Meeting adjourned')
     : result?.method === 'dice'
-    ? `Ruling in favor of the ${shape || 'the table'}. Poker dice hand wins. Meeting adjourned`
+    ? (result.winner
+      ? `Ruling in favor of the ${shape || 'table'}, who had ${result.winningHandName || 'the winning hand'} over ${result.losingHandName || 'the opposing hand'}. Meeting adjourned`
+      : 'The poker dice are tied. Meeting adjourned')
     : result?.method === 'straws'
     ? (isStrawLoss ? 'You drew the short straw. Meeting adjourned' : 'Opponent came short. Meeting adjourned')
     : `Ruling in favor of the ${shape}. Meeting adjourned`;
+  if (result?.series?.target === 3 && result.series.complete && result.winner && result.loser) {
+    const winnerLabel = `${result.winner.color} ${result.winner.shape}`;
+    const loserLabel = `${result.loser.color} ${result.loser.shape}`;
+    verdictSeriesSubtext.textContent = `${winnerLabel} has convinced the court over ${loserLabel}`;
+    verdictSeriesSubtext.classList.remove('is-hidden');
+  }
+  if (result?.method === 'dice' && result.winningDice?.length) {
+    verdictWinningHand.innerHTML = `<div><small>Winning hand</small><span class="verdict-dice-values">${result.winningDice.map((value) => `<span>${diceSymbol(value)}</span>`).join('')}</span></div><div><small>Losing hand</small><span class="verdict-dice-values">${(result.losingDice || []).map((value) => `<span>${diceSymbol(value)}</span>`).join('')}</span></div>`;
+    verdictWinningHand.classList.remove('is-hidden');
+  }
   rematchPanel.classList.add('is-hidden');
+  if (result?.series && !result.series.complete) {
+    const isSeriesWinner = result.winner?.id === socketState.player;
+    if (isSeriesWinner) {
+      rematchPanel.classList.remove('is-hidden');
+      rematchPrompt.textContent = 'Continue to the next game?';
+      continueSeriesButton.classList.remove('is-hidden');
+      bestOfThreeButton.classList.add('is-hidden');
+      bestOfFiveButton.classList.add('is-hidden');
+      acceptRematchButton.classList.add('is-hidden');
+      declineRematchButton.classList.add('is-hidden');
+    }
+  }
   window.setTimeout(() => {
-    if (!result?.winner || !result?.loser || result.series?.complete) return;
+    if (!result?.winner || !result?.loser || result.series?.complete || (result.series && !result.series.complete)) return;
     const loser = result.loser.id === socketState.player;
     const winner = result.winner.id === socketState.player;
     if (!loser) return;
@@ -361,8 +514,10 @@ function showVerdict(color, shape, result) {
     declineRematchButton.classList.add('is-hidden');
     rematchPrompt.textContent = 'Choose a rematch format.';
   }, 2000);
+  transitionOverlay.classList.add('is-active');
   verdictOverlay.setAttribute('aria-hidden', 'false');
-  verdictOverlay.classList.add('is-visible');
+  window.requestAnimationFrame(() => verdictOverlay.classList.add('is-visible'));
+  window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 480);
 }
 
 function renderStrawDraw(message) {
@@ -382,9 +537,9 @@ function renderStrawDraw(message) {
   });
   (message.straws || []).forEach((strawData, index) => {
     const drawn = drawnIds.has(strawData.id);
-    if (drawn) return;
     const strawButton = document.createElement('button');
-    strawButton.className = `straw-choice${strawData.short ? ' is-short' : ''}${drawn ? ' is-drawn' : ''}`;
+    const newlyDrawn = drawn && !knownDrawnStraws.has(strawData.id);
+    strawButton.className = `straw-choice${strawData.short ? ' is-short' : ''}${drawn ? ` is-drawn ${newlyDrawn ? 'is-sinking' : 'is-sunk'}` : ''}`;
     strawButton.type = 'button';
     strawButton.style.setProperty('--straw-height', `${strawData.height}px`);
     strawButton.style.setProperty('--straw-tilt', `${strawData.angle || 0}deg`);
@@ -398,6 +553,7 @@ function renderStrawDraw(message) {
     });
     strawChoices.appendChild(strawButton);
   });
+  knownDrawnStraws = drawnIds;
 }
 
 function connectSocket() {
@@ -411,46 +567,89 @@ function connectSocket() {
       socketState.player = message.playerId;
       loginView.classList.add('is-hidden');
       roomView.classList.remove('is-hidden');
+      selectedColorGlow.className = 'selected-color-glow';
+      backButton.classList.add('is-hidden');
       backButton.classList.remove('is-fading');
       renderRoom(message.room);
       window.setTimeout(() => transitionOverlay.classList.remove('is-active'), 420);
     }
     if (message.type === 'room') renderRoom(message.room);
-    if (message.type === 'strawStart') renderStrawDraw(message);
+    if (message.type === 'strawStart') { knownDrawnStraws = new Set(); revealAfterBlack(() => renderStrawDraw(message)); }
     if (message.type === 'strawUpdate') renderStrawDraw(message);
-    if (message.type === 'gestureStart') renderGestureStart(message);
+    if (message.type === 'gestureStart') revealAfterBlack(() => renderGestureStart(message));
     if (message.type === 'gestureUpdate') {
       gestureInstruction.textContent = 'Waiting for the other player.';
+      renderGestureChoices(message.selectedPlayerIds || [], message.choices || {});
     }
     if (message.type === 'gestureResult') {
       showGestureResult(message);
-      if (message.winner) {
-        gestureOverlay.classList.remove('is-visible');
-        gestureOverlay.setAttribute('aria-hidden', 'true');
-        showVerdict(message.winner.color, message.winner.shape, { ...message, method: 'gesture' });
+      if (message.awaitDirection) {
+        window.setTimeout(() => gestureReveal.classList.add('is-resolving'), 720);
+        window.setTimeout(() => revealAfterBlack(() => renderDirectionChoices(message)), 1500);
+      } else if (message.winner) {
+        window.setTimeout(() => {
+          gestureReveal.querySelectorAll('.gesture-result-card:not(.is-winner)').forEach((card) => card.classList.add('is-loser'));
+          gestureReveal.classList.add('is-resolving');
+        }, 720);
+        window.setTimeout(() => {
+          if (message.complete) revealAfterBlack(() => {
+            gestureOverlay.classList.remove('is-visible');
+            gestureOverlay.setAttribute('aria-hidden', 'true');
+            showVerdict(message.winner.color, message.winner.shape, { ...message, method: 'gesture', series: message.roomSeries });
+          });
+          else revealAfterBlack(() => renderGestureStart({ selectedPlayerIds: [], choices: {}, gestureSeries: message.gestureSeries, roomSeries: message.roomSeries }));
+        }, 1500);
+      } else {
+        window.setTimeout(() => {
+          gestureReveal.classList.add('is-tie');
+          gestureReveal.classList.add('is-resolving');
+        }, 720);
+        window.setTimeout(() => revealAfterBlack(() => renderGestureStart({ selectedPlayerIds: [], choices: {}, gestureSeries: message.gestureSeries, roomSeries: message.roomSeries })), 1500);
       }
     }
-    if (message.type === 'cardsStart' || message.type === 'cardUpdate') renderCardGame(message);
+    if (message.type === 'directionUpdate') {
+      gestureInstruction.textContent = 'Waiting for the other player.';
+    }
+    if (message.type === 'directionResult') {
+      showDirectionResult(message);
+      window.setTimeout(() => revealAfterBlack(() => {
+        if (message.complete) {
+          gestureOverlay.classList.remove('is-visible');
+          gestureOverlay.setAttribute('aria-hidden', 'true');
+          showVerdict(message.winner.color, message.winner.shape, { ...message, method: 'gesture', series: message.roomSeries });
+        } else renderGestureStart({ selectedPlayerIds: [], choices: {}, gestureSeries: message.gestureSeries, roomSeries: message.roomSeries });
+      }), 1200);
+    }
+    if (message.type === 'cardsStart') revealAfterBlack(() => renderCardGame(message));
+    if (message.type === 'cardUpdate') renderCardGame(message);
     if (message.type === 'cardResult') {
-      renderCardCollections(message.collections);
-      cardsOverlay.classList.remove('is-visible');
-      cardsOverlay.setAttribute('aria-hidden', 'true');
-      showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'cards' });
+      revealAfterBlack(() => {
+        renderCardCollections(message.collections);
+        cardsOverlay.classList.remove('is-visible');
+        cardsOverlay.setAttribute('aria-hidden', 'true');
+        showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'cards' });
+      });
     }
     if (message.type === 'diceStart') {
       selectedDice = new Set();
-      renderDiceState(message);
+      diceCalledHand.classList.add('is-hidden');
+      diceCalledHand.innerHTML = '';
+      revealAfterBlack(() => renderDiceState(message));
     }
     if (message.type === 'diceUpdate') {
       selectedDice = new Set();
       renderDiceState(message);
     }
     if (message.type === 'diceResult') {
-      diceOverlay.classList.remove('is-visible');
-      diceOverlay.setAttribute('aria-hidden', 'true');
-      showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'dice' });
+      revealAfterBlack(() => {
+        diceOverlay.classList.remove('is-visible');
+        diceOverlay.setAttribute('aria-hidden', 'true');
+        showVerdict(message.winner?.color || 'white', message.winner?.shape, { ...message, method: 'dice' });
+      });
     }
     if (message.type === 'rematchOffer') {
+      verdictQuestionMark.classList.remove('is-hidden');
+      verdictQuestionMark.classList.add('is-visible');
       rematchPanel.classList.remove('is-hidden');
       bestOfThreeButton.classList.add('is-hidden');
       bestOfFiveButton.classList.add('is-hidden');
@@ -460,49 +659,91 @@ function connectSocket() {
     }
     if (message.type === 'rematchReady') {
       nextMeetingNumber = message.meetingNumber || 2;
-      currentRoomState.series = { target: message.bestOf, meetings: nextMeetingNumber - 1, chooserId: message.chooserId };
+      currentRoomState.series = message.series || { target: message.bestOf, round: 1, wins: {}, chooserId: message.chooserId };
       verdictOverlay.classList.remove('is-visible');
       verdictOverlay.setAttribute('aria-hidden', 'true');
       rematchPanel.classList.add('is-hidden');
       roomView.classList.remove('is-hidden');
       renderRoom(currentRoomState);
     }
-    if (message.type === 'rematchDeclined') rematchPrompt.textContent = 'Rematch declined.';
+    if (message.type === 'seriesContinue') {
+      nextMeetingNumber = message.meetingNumber || (nextMeetingNumber + 1);
+      currentRoomState.series = message.series || currentRoomState.series;
+      verdictOverlay.classList.remove('is-visible');
+      verdictOverlay.setAttribute('aria-hidden', 'true');
+      rematchPanel.classList.add('is-hidden');
+      roomView.classList.remove('is-hidden');
+      renderRoom(currentRoomState);
+    }
+    if (message.type === 'rematchDeclined') {
+      rematchPanel.classList.add('is-hidden');
+      verdictQuestionMark.classList.remove('is-visible');
+      verdictQuestionMark.classList.add('is-hidden');
+      rematchPrompt.textContent = 'Choose a rematch format.';
+    }
     if (message.type === 'gameDenied') resultElement.textContent = message.message;
     if (message.type === 'result') {
-      strawOverlay.classList.remove('is-visible');
-      strawOverlay.setAttribute('aria-hidden', 'true');
-      showVerdict(message.winner.color, message.winner.shape, message);
+      revealAfterBlack(() => {
+        strawOverlay.classList.remove('is-visible');
+        strawOverlay.setAttribute('aria-hidden', 'true');
+        showVerdict(message.winner.color, message.winner.shape, message);
+      });
     }
     if (message.type === 'error') { formMessage.textContent = message.message; formMessage.className = 'form-message is-error'; transitionOverlay.classList.remove('is-active'); backButton.classList.remove('is-fading'); }
   });
   socket.addEventListener('error', () => { formMessage.textContent = 'Could not connect to the room server. Try again.'; formMessage.className = 'form-message is-error'; });
 }
 
-function chooseShape(shape) {
-  fadeBetween(() => {
-    socketState.shape = shape;
-    const chosenShape = socketState.shape[0].toUpperCase() + socketState.shape.slice(1);
-    pageEyebrow.textContent = 'You are the';
-    kingShapeButton.classList.add('is-hidden');
-    backButton.classList.remove('is-hidden');
-    pageTitle.innerHTML = shapeMarkup(socketState.shape);
-    shapeStep.classList.add('is-hidden');
-    colorStep.classList.remove('is-hidden');
-    stepInstruction.textContent = 'Now choose your color.';
+function updateSetupState() {
+  document.querySelectorAll('.shape-option').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.shape === socketState.shape);
+    button.setAttribute('aria-pressed', button.dataset.shape === socketState.shape ? 'true' : 'false');
   });
+  document.querySelectorAll('.color-option').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.color === socketState.color);
+    button.setAttribute('aria-pressed', button.dataset.color === socketState.color ? 'true' : 'false');
+  });
+  if (socketState.color) selectedColorGlow.className = `selected-color-glow selected-color-glow--${socketState.color} is-visible`;
+  else selectedColorGlow.className = 'selected-color-glow';
+
+  if (socketState.shape && socketState.color) pageTitle.innerHTML = `<span class="header-color-symbol header-color-symbol--${socketState.color}" aria-label="${socketState.color} ${socketState.shape}">${shapeMarkup(socketState.shape)}</span>`;
+}
+
+function showFormError(message) {
+  formMessage.classList.remove('is-error');
+  formMessage.textContent = message;
+  void formMessage.offsetWidth;
+  formMessage.className = 'form-message is-error';
+}
+
+function chooseShape(shape) {
+  socketState.shape = shape;
+  kingShapeButton.classList.toggle('is-selected', shape === 'king');
+  updateSetupState();
+  colorStep.classList.remove('is-hidden');
+    backButton.classList.add('is-hidden');
+  stepInstruction.textContent = 'Now choose your color.';
 }
 
 document.querySelectorAll('.shape-option').forEach((button) => button.addEventListener('click', () => chooseShape(button.dataset.shape)));
 kingShapeButton.addEventListener('click', () => chooseShape('king'));
 
 document.querySelectorAll('.color-option').forEach((button) => button.addEventListener('click', () => {
+  if (!socketState.shape) {
+    showFormError('Choose a symbol before choosing a color.');
+    stepInstruction.textContent = 'Choose a symbol first.';
+    return;
+  }
   fadeBetween(() => {
     socketState.color = button.dataset.color;
-    selectedColorGlow.className = `selected-color-glow selected-color-glow--${socketState.color} is-visible`;
-    pageTitle.innerHTML = `<span class="header-color-symbol header-color-symbol--${socketState.color}" aria-label="${socketState.color} ${socketState.shape}">${shapeMarkup(socketState.shape)}</span>`;
+    updateSetupState();
+    shapeStep.classList.add('is-hidden');
     colorStep.classList.add('is-hidden');
     roomStep.classList.remove('is-hidden');
+    roomStep.classList.add('room-step-ready');
+    pageEyebrow.classList.add('is-hidden');
+    kingShapeButton.classList.add('is-hidden');
+    backButton.classList.remove('is-hidden');
     stepInstruction.textContent = 'Prepare your argument.';
   });
 }));
@@ -511,25 +752,34 @@ backButton.addEventListener('click', () => {
   if (!roomStep.classList.contains('is-hidden')) {
     fadeBetween(() => {
       roomStep.classList.add('is-hidden');
+      roomStep.classList.remove('room-step-ready');
+      shapeStep.classList.remove('is-hidden');
       colorStep.classList.remove('is-hidden');
-      clearRoomSelection();
+      pageEyebrow.classList.remove('is-hidden');
+      pageEyebrow.classList.remove('prepare-heading');
+      pageEyebrow.textContent = 'King of Nothing Presents';
+      kingShapeButton.classList.remove('is-hidden');
+      kingShapeButton.classList.remove('is-selected');
+      socketState.shape = null;
+      socketState.color = null;
+      backButton.classList.add('is-hidden');
+      pageTitle.innerHTML = 'Deciding<br /><span>Judge</span>';
       selectedColorGlow.className = 'selected-color-glow';
-      pageTitle.innerHTML = shapeMarkup(socketState.shape);
-      stepInstruction.textContent = 'Now choose your color.';
+      updateSetupState();
+      clearRoomSelection();
+      stepInstruction.textContent = 'Choose your symbol to start.';
     });
     return;
   }
   fadeBetween(() => {
     colorStep.classList.add('is-hidden');
-    shapeStep.classList.remove('is-hidden');
     socketState.shape = null;
     socketState.color = null;
-    kingShapeButton.classList.remove('is-hidden');
     backButton.classList.add('is-hidden');
-    pageEyebrow.textContent = 'King of Nothing Presents';
     pageTitle.innerHTML = 'Deciding<br /><span>Judge</span>';
-    stepInstruction.textContent = 'Choose a shape to begin.';
+    stepInstruction.textContent = 'Choose one symbol and one color to begin.';
     selectedColorGlow.className = 'selected-color-glow';
+    updateSetupState();
   });
 });
 
@@ -552,6 +802,11 @@ newRoomName.addEventListener('blur', () => newRoomName.classList.remove('is-focu
 
 roomForm.addEventListener('submit', (event) => {
   event.preventDefault();
+  if (!socketState.shape || !socketState.color) {
+    formMessage.textContent = 'Choose both a symbol and a color first.';
+    formMessage.className = 'form-message is-error';
+    return;
+  }
   const roomName = newRoomName.value.trim() || selectedRoomName;
   if (!roomName) { formMessage.textContent = 'Choose an open room or create a new one.'; formMessage.className = 'form-message is-error'; return; }
   formMessage.textContent = 'Joining room...';
@@ -559,13 +814,14 @@ roomForm.addEventListener('submit', (event) => {
   joinRoom(roomName);
 });
 
-judgeButton.addEventListener('click', () => send('judge'));
-strawButton.addEventListener('click', () => send('straws'));
-gestureButton.addEventListener('click', () => send('gestureStart'));
-cardsButton.addEventListener('click', () => send('cardsStart'));
-diceButton.addEventListener('click', () => send('diceStart'));
-bestOfThreeButton.addEventListener('click', () => send('rematchRequest', { bestOf: 3, mode: bestOfThreeButton.textContent === 'Break the Tie' ? 'breakTie' : 'bestOf3' }));
-bestOfFiveButton.addEventListener('click', () => send('rematchRequest', { bestOf: 5 }));
+judgeButton.addEventListener('click', () => fadeToGame('judge'));
+strawButton.addEventListener('click', () => fadeToGame('straws'));
+gestureButton.addEventListener('click', () => fadeToGame('gestureStart'));
+cardsButton.addEventListener('click', () => fadeToGame('cardsStart'));
+diceButton.addEventListener('click', () => fadeToGame('diceStart'));
+bestOfThreeButton.addEventListener('click', () => send('rematchRequest', { bestOf: 3, mode: currentGameMode }));
+bestOfFiveButton.addEventListener('click', () => send('rematchRequest', { bestOf: 5, mode: currentGameMode }));
+continueSeriesButton.addEventListener('click', () => send('seriesContinue'));
 acceptRematchButton.addEventListener('click', () => send('rematchResponse', { accepted: true }));
 declineRematchButton.addEventListener('click', () => send('rematchResponse', { accepted: false }));
 rerollDiceButton.addEventListener('click', () => {
